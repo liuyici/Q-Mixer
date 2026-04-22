@@ -1,0 +1,23 @@
+--------------------------------------------------Subject 1 : Seed is: 1
+pre_training acc is:0.89
+fine_tuning acc is:0.945
+--------------------------------------------------Subject 2 : Seed is: 1
+pre_training acc is:0.895
+fine_tuning acc is:0.92
+--------------------------------------------------Subject 3 : Seed is: 1
+pre_training acc is:0.93
+fine_tuning acc is:0.955
+--------------------------------------------------Subject 4 : Seed is: 1
+pre_training acc is:0.8
+fine_tuning acc is:0.89
+--------------------------------------------------Subject 5 : Seed is: 1
+pre_training acc is:0.695
+fine_tuning acc is:0.755
+--------------------------------------------------Subject 6 : Seed is: 1
+pre_training acc is:0.69
+fine_tuning acc is:0.75
+--------------------------------------------------Subject 7 : Seed is: 1
+pre_training acc is:0.85
+fine_tuning acc is:0.915
+--------------------------------------------------All accuracy is: [0.89, 0.895, 0.93, 0.8, 0.695, 0.69, 0.85]
+All subject Aver accuracy is: [0.945, 0.92, 0.955, 0.89, 0.755, 0.75, 0.915]
