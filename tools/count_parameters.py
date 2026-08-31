@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -18,40 +19,20 @@ import torch
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGS = {
-    "BCI_14_7513_sota": {
-        "emb_size": 120,
-        "depth": 6,
-        "window_size": 5,
-        "n_classes": 2,
-        "domain_classes": 13,
-        "expected": {"QuantGate": 9501982, "Discriminator": 4557, "combined": 9506539},
-    },
-    "BCI_2a9_7922_sota": {
-        "emb_size": 253,
-        "depth": 2,
-        "window_size": 5,
-        "n_classes": 2,
-        "domain_classes": 8,
-        "expected": {"QuantGate": 4006740, "Discriminator": 2344, "combined": 4009084},
-    },
-    "BCI_IVA5_8479_sota": {
-        "emb_size": 7021,
-        "depth": 6,
-        "window_size": 1,
-        "n_classes": 2,
-        "domain_classes": 4,
-        "expected": {"QuantGate": 55313328, "Discriminator": 4260, "combined": 55317588},
-    },
-    "BCI_IVNO7_8293_sota": {
-        "emb_size": 1770,
-        "depth": 6,
-        "window_size": 1,
-        "n_classes": 2,
-        "domain_classes": 6,
-        "expected": {"QuantGate": 20268154, "Discriminator": 4326, "combined": 20272480},
-    },
-}
+with (ROOT / "PAPER_CONFIG.json").open(encoding="utf-8") as config_file:
+    PAPER_CONFIG = json.load(config_file)
+
+CONFIGS = {}
+for entry_path, entry_config in PAPER_CONFIG["entry_points"].items():
+    name = Path(entry_path).parent.name
+    CONFIGS[name] = {
+        "emb_size": entry_config["emb_size"],
+        "depth": entry_config["depth"],
+        "window_size": entry_config["window_size"],
+        "n_classes": entry_config["n_classes"],
+        "domain_classes": entry_config["domain_classes"],
+        "expected": entry_config["parameter_totals"],
+    }
 
 
 def load_entry_point(name):
