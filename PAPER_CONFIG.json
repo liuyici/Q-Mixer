@@ -10,7 +10,15 @@
     "D": 512,
     "layer_norm": true,
     "independent_quaternion_projections": true,
-    "residual_block": true
+    "residual_block": true,
+    "interaction_operator": "Hamilton product",
+    "interaction_inputs": "LayerNorm(channel) and LayerNorm(temporal)"
+  },
+  "parameter_accounting": {
+    "script": "tools/count_parameters.py",
+    "scope": "all trainable QuantGate and domain-discriminator parameters, including biases and normalization affine parameters",
+    "unit": "scalar trainable parameters",
+    "reported_22_6K_status": "not claimed for these D=512 Q-Mixer entry points; a 22.6K JSED result requires its own separately versioned implementation and configuration"
   },
   "optimization": {
     "optimizer": "Adam",
@@ -24,9 +32,9 @@
     "auc": "one-vs-rest from softmax probabilities; binary uses positive-class probability"
   },
   "entry_points": {
-    "BCI_14_7513_sota/main.py": {"n_epochs": 100, "max_iter2": 33, "subjects": 14},
-    "BCI_2a9_7922_sota/main.py": {"n_epochs": 100, "max_iter2": 20, "subjects": 9},
-    "BCI_IVA5_8479_sota/main.py": {"n_epochs": 100, "max_iter2": 102, "subjects": 5},
-    "BCI_IVNO7_8293_sota/main.py": {"n_epochs": 15, "max_iter2": 55, "subjects": 7}
+    "BCI_14_7513_sota/main.py": {"n_epochs": 100, "max_iter2": 33, "subjects": 14, "emb_size": 120, "depth": 6, "window_size": 5, "n_classes": 2, "domain_classes": 13, "parameter_totals": {"QuantGate": 9501982, "Discriminator": 4557, "combined": 9506539}},
+    "BCI_2a9_7922_sota/main.py": {"n_epochs": 100, "max_iter2": 20, "subjects": 9, "emb_size": 253, "depth": 2, "window_size": 5, "n_classes": 2, "domain_classes": 8, "parameter_totals": {"QuantGate": 4006740, "Discriminator": 2344, "combined": 4009084}},
+    "BCI_IVA5_8479_sota/main.py": {"n_epochs": 100, "max_iter2": 102, "subjects": 5, "emb_size": 7021, "depth": 6, "window_size": 1, "n_classes": 2, "domain_classes": 4, "parameter_totals": {"QuantGate": 55313328, "Discriminator": 4260, "combined": 55317588}},
+    "BCI_IVNO7_8293_sota/main.py": {"n_epochs": 15, "max_iter2": 55, "subjects": 7, "emb_size": 1770, "depth": 6, "window_size": 1, "n_classes": 2, "domain_classes": 6, "parameter_totals": {"QuantGate": 20268154, "Discriminator": 4326, "combined": 20272480}}
   }
 }

@@ -48,6 +48,20 @@ def GaussianNoise(x, sigma=1.0):
     return x + noise
 
 
+def hamilton_product(q1, q2):
+    """Hamilton product for feature vectors packed as [r, i, j, k] blocks."""
+    if q1.shape != q2.shape or q1.size(-1) % 4 != 0:
+        raise ValueError("Hamilton inputs must have the same shape and a 4-way last dimension")
+    a, b, c, d = q1.chunk(4, dim=-1)
+    e, f, g, h = q2.chunk(4, dim=-1)
+    return torch.cat((
+        a * e - b * f - c * g - d * h,
+        a * f + b * e + c * h - d * g,
+        a * g - b * h + c * e + d * f,
+        a * h + b * g - c * f + d * e,
+    ), dim=-1)
+
+
 class SLR_layer(nn.Module):
     def __init__(self, in_features, out_features):
         super(SLR_layer, self).__init__()
@@ -64,7 +78,7 @@ class SLR_layer(nn.Module):
         return output
 
 class QuaternionFusionHead(nn.Module):
-    """四元数特征混淆模块：融合通道和时间特征（两个独立分量，一个相乘，一个相加），使用四元数旋转最终整合一波"""
+    """Fuse channel and temporal features with a Hamilton-product interaction."""
     def __init__(self, d_model, dropout=0.1):
         super().__init__()
         assert d_model % 4 == 0
@@ -112,7 +126,7 @@ class QuaternionFusionHead(nn.Module):
         t = self.norm_t(temporal)  # [B,T,D]
         temporal = self.temporal_proj(t)             # q_1: temporal
         shared = self.shared_proj(0.5 * (c + t))     # q_2: shared
-        interaction = self.interaction_proj(c * t)   # q_3: interaction
+        interaction = self.interaction_proj(hamilton_product(c, t))  # q_3: interaction
         spatial = self.spatial_proj(c)               # q_4: spatial
         q = torch.stack([temporal, shared, interaction, spatial], dim=-1)
         q_rot = self.rot(q.reshape(-1, 4)).view(B, T, self.q_dim, 4)

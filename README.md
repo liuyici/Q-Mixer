@@ -57,15 +57,11 @@ Q-Mixer consists of:
 Instead of naive fusion (sum / concat), Q-Mixer constructs:
 
 \[
-q = (r, i, j, k)
+q = (q_{temporal}, q_{shared}, q_{interaction}, q_{spatial})
 \]
 
-where:
-
-- **r**: shared information  
-- **i**: spatial-specific  
-- **j**: temporal-specific  
-- **k**: interaction (non-linear coupling via Hamilton product)
+The implementation uses this same tuple order. The interaction component is
+the Hamilton product of the normalized channel and temporal representations.
 
 This enables:
 
@@ -123,12 +119,16 @@ All experiments follow **LOSOCV (Leave-One-Subject-Out)**.
 
 ## ⚙️ Efficiency
 
-Q-Mixer achieves:
+Parameter counts are reported from the instantiated networks, including all
+trainable biases and normalization parameters. Reproduce the per-layer report
+for all four entry points with:
 
-- **~75% parameter reduction** compared to real-valued models
-- Competitive or superior performance
+```bash
+python tools/count_parameters.py
+```
 
-> This demonstrates that **explicit structured modeling can outperform brute-force scaling**.
+The D=512 Q-Mixer configurations are not labeled as a 22.6K-parameter JSED
+model; that number requires a separately versioned JSED implementation.
 
 ---
 
@@ -176,7 +176,7 @@ Removing any component degrades performance:
 - ✅ Propose a **quaternion spatiotemporal mixer** for EEG decoding  
 - ✅ Introduce **explicit structured coupling** instead of implicit learning  
 - ✅ Achieve **robust cross-subject generalization** across 6 datasets  
-- ✅ Reduce parameters by **~75%** while maintaining strong performance  
+- ✅ Publish exact model configurations and reproducible parameter accounting
 
 ---
 
