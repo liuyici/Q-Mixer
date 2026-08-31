@@ -76,7 +76,7 @@ This enables:
 Unlike real-valued networks:
 
 - Quaternion algebra naturally supports **multi-component coupling**
-- Enables **compact parameterization**
+- Uses structured quaternion parameterization
 - Provides **structured inductive bias**
 
 > Q-Mixer is not a simple replacement of real-valued layers,  
