@@ -1,0 +1,32 @@
+{
+  "selection": {
+    "target_labels_used_for_selection": false,
+    "pretraining_epochs": "fixed by --n_epochs",
+    "fine_tuning_iterations": "fixed by --max_iter2",
+    "final_target_evaluation": "one held-out evaluation after optimization"
+  },
+  "model": {
+    "quaternion_component_order": ["temporal", "shared", "interaction", "spatial"],
+    "D": 512,
+    "layer_norm": true,
+    "independent_quaternion_projections": true,
+    "residual_block": true
+  },
+  "optimization": {
+    "optimizer": "Adam",
+    "betas": [0.5, 0.999],
+    "beta_mmd": 1.0,
+    "gamma_adversarial": 1.0,
+    "seeds": [1, 2, 3, 4, 5]
+  },
+  "metrics": {
+    "f1_average": "weighted",
+    "auc": "one-vs-rest from softmax probabilities; binary uses positive-class probability"
+  },
+  "entry_points": {
+    "BCI_14_7513_sota/main.py": {"n_epochs": 100, "max_iter2": 33, "subjects": 14},
+    "BCI_2a9_7922_sota/main.py": {"n_epochs": 100, "max_iter2": 20, "subjects": 9},
+    "BCI_IVA5_8479_sota/main.py": {"n_epochs": 100, "max_iter2": 102, "subjects": 5},
+    "BCI_IVNO7_8293_sota/main.py": {"n_epochs": 15, "max_iter2": 55, "subjects": 7}
+  }
+}

@@ -78,7 +78,7 @@ class PairedData(object):
                 data["Sy" + str(i + 1)] = src_y[i]
             # add target data
             data["Tx"] = trg_x
-            data["Ty"] = trg_y
+            # Keep target labels out of optimization batches; use them only in the final report.
 
             return data
 

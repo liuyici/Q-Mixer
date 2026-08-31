@@ -37,7 +37,6 @@ from einops.layers.torch import Rearrange, Reduce
 from sklearn.metrics import confusion_matrix
 from sklearn.metrics import roc_auc_score
 from sklearn.metrics import f1_score
-from sklearn.preprocessing import label_binarize
 
 # ============================================================
 # Utils
@@ -77,10 +76,10 @@ class QuaternionFusionHead(nn.Module):
         self.norm_t = nn.LayerNorm(d_model)
 
        
-        self.r_proj = QuaternionLinear(d_model, self.q_dim)
-        self.i_proj = QuaternionLinear(d_model, self.q_dim)
-        self.j_proj = QuaternionLinear(d_model, self.q_dim)
-        self.k_proj = QuaternionLinear(d_model, self.q_dim)
+        self.temporal_proj = QuaternionLinear(d_model, self.q_dim)
+        self.shared_proj = QuaternionLinear(d_model, self.q_dim)
+        self.interaction_proj = QuaternionLinear(d_model, self.q_dim)
+        self.spatial_proj = QuaternionLinear(d_model, self.q_dim)
 
         self.rot = QuaternionLinearAutograd(
             4, 4,
@@ -111,11 +110,11 @@ class QuaternionFusionHead(nn.Module):
         B, T, D = channel.shape
         c = self.norm_c(channel)   # [B,T,D]
         t = self.norm_t(temporal)  # [B,T,D]
-        r = self.r_proj(0.5 * (c + t))   # [B,T,q_dim]
-        i = self.i_proj(c)               # [B,T,q_dim]
-        j = self.j_proj(t)               # [B,T,q_dim]
-        k = self.k_proj(c * t)           # [B,T,q_dim]
-        q = torch.stack([r, i, j, k], dim=-1)
+        temporal = self.temporal_proj(t)             # q_1: temporal
+        shared = self.shared_proj(0.5 * (c + t))     # q_2: shared
+        interaction = self.interaction_proj(c * t)   # q_3: interaction
+        spatial = self.spatial_proj(c)               # q_4: spatial
+        q = torch.stack([temporal, shared, interaction, spatial], dim=-1)
         q_rot = self.rot(q.reshape(-1, 4)).view(B, T, self.q_dim, 4)
         fused = q_rot.reshape(B, T, self.d_model)
         fused = self.out_proj(fused)
@@ -131,7 +130,7 @@ class QuaternionGatedEEGBlockV3(nn.Module):
         self.Freq = Freq
         self.T = T
         self.D_in = C * Freq
-        self.D_q = 256
+        self.D_q = 512
 
         self.norm = nn.LayerNorm(self.D_in)
         self.drop = nn.Dropout(drop_p)
@@ -268,16 +267,18 @@ class ExGAN():
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.args = args
         self.batch_size = 144
-        self.n_epochs = 100  #1000
+        self.n_epochs = args.n_epochs
         self.lr = 0.002
         self.lr2 = 0.0002
         self.b1 = 0.5
         self.b2 = 0.999
+        self.beta = getattr(args, 'beta', 1.0)
+        self.gamma = getattr(args, 'gamma', 1.0)
         self.radius = 10
-        self.criterion_cls = torch.nn.CrossEntropyLoss().cuda()
-        self.model = QuantGate(emb_size=253, depth=2, bottleneck_dim=128, n_classes=2).float().cuda()
+        self.criterion_cls = torch.nn.CrossEntropyLoss().to(self.device)
+        self.model = QuantGate(emb_size=253, depth=2, bottleneck_dim=128, n_classes=2).float().to(self.device)
         self.domain_Discriminator = Discriminator(emb_size=253, n_classes=8).to(self.device).float()
-        self.criterion = LabelSmooth(num_class=args.num_class).cuda()
+        self.criterion = LabelSmooth(num_class=args.num_class).to(self.device)
         
     def schedule_lambda(self, epoch, total_epochs, max_lambda=0.6, k=5):
         p = epoch / total_epochs  # 归一化到 [0,1]
@@ -286,7 +287,7 @@ class ExGAN():
 
     def get_source_data(self, feature="de_LDS"):
         if self.args.dataset == "seed":
-            datasets, dataset_test, X_subjects, Y_subjects = load_mi1(args, path=r"E:/Research/EEGDataSet/BNCI2014012/saved_loso_window_logmap_gfk", n_windows=5, k=25)
+            datasets, dataset_test, X_subjects, Y_subjects = load_mi1(self.args, path=self.args.file_path, n_windows=self.args.window_size, k=25)
         return datasets, dataset_test, X_subjects, Y_subjects
 
     def get_source_data_for_fine(self, X, Y):
@@ -294,39 +295,49 @@ class ExGAN():
             dset_loaders = fine_tuning_load_XY_MI(self.args, X, Y)
         return dset_loaders
 
+    def _compute_metrics(self, logits, labels):
+        """Compute final-report metrics without using them for model selection."""
+        logits = logits.detach().float().cpu()
+        labels = torch.as_tensor(labels).view(-1).long().cpu()
+        probabilities = torch.softmax(logits, dim=1).numpy()
+        predictions = probabilities.argmax(axis=1)
+        y_true = labels.numpy()
+        accuracy = float(np.mean(predictions == y_true))
+        f1 = f1_score(y_true, predictions, average='weighted', zero_division=0)
+        try:
+            if probabilities.shape[1] == 2:
+                auc = roc_auc_score(y_true, probabilities[:, 1])
+            else:
+                auc = roc_auc_score(y_true, probabilities, average='macro', multi_class='ovr')
+        except ValueError:
+            auc = float('nan')
+        matrix = confusion_matrix(y_true, predictions)
+        return accuracy, f1, auc, matrix, y_true, predictions
+
     def test_suda(self, loader, model):
-        start_test = True
+        logits, labels = [], []
         with torch.no_grad():
-            iter_test = iter(loader["test"])
-            for i in range(len(loader['test'])):
-                data = next(iter_test)
-                inputs = data[0]
-                labels = data[1]
-                inputs = inputs.type(torch.FloatTensor).cuda()
-                inputs = inputs.view(inputs.size(0), inputs.size(1), -1)  # 自动计算 62×5=310 [批次，3，310]
-                labels = labels
-                _, outputs = model(inputs.float())
-                if start_test:
-                    all_output = outputs.float().cpu()
-                    all_label = labels.float()
-                    start_test = False
-                else:
-                    all_output = torch.cat((all_output, outputs.float().cpu()), 0)
-                    all_label = torch.cat((all_label, labels.float()), 0)
-        _, predictions = torch.max(all_output, 1)
-        accuracy = torch.sum(torch.squeeze(predictions).float() == all_label).item() / float(all_label.size()[0])
-        y_true = all_label.cpu().data.numpy()
-        y_pred = predictions.cpu().data.numpy()
-        labels = np.unique(y_true)
-    
-        ytest = label_binarize(y_true, classes=labels)
-        ypreds = label_binarize(y_pred, classes=labels)
-    
-        f1 = f1_score(y_true, y_pred, average='macro')
-        auc = roc_auc_score(ytest, ypreds, average='macro', multi_class='ovr')
-        matrix = confusion_matrix(y_true, y_pred)
-    
-        return accuracy, f1, auc, matrix
+            model.eval()
+            for inputs, batch_labels in loader["test"]:
+                inputs = inputs.float().to(self.device)
+                inputs = inputs.view(inputs.size(0), inputs.size(1), -1)
+                batch_logits = model(inputs)[1]
+                logits.append(batch_logits.cpu())
+                labels.append(batch_labels.cpu())
+        metrics = self._compute_metrics(torch.cat(logits), torch.cat(labels))
+        return metrics[:4]
+
+    def evaluate_target(self, test_dataset):
+        """Evaluate once after training; target labels are never used for selection."""
+        logits, labels = [], []
+        with torch.no_grad():
+            self.model.eval()
+            for tar_data in test_dataset:
+                inputs = tar_data['Tx'].float().to(self.device)
+                inputs = inputs.view(inputs.size(0), inputs.size(1), -1)
+                logits.append(self.model(inputs)[1].cpu())
+                labels.append(tar_data['Ty'].cpu())
+        return self._compute_metrics(torch.cat(logits), torch.cat(labels))
 
     def _to_tensor(self, x, device, dtype=torch.float32):
         if isinstance(x, np.ndarray):
@@ -337,18 +348,13 @@ class ExGAN():
         
         train_dataset, test_dataset, X, Y = self.get_source_data(feature="de_LDS")
     
-        self.optimizer = torch.optim.SGD(
+        self.optimizer = torch.optim.Adam(
             list(self.model.parameters()) + list(self.domain_Discriminator.parameters()),
             lr=self.lr,
-            momentum=0.9,
+            betas=(self.b1, self.b2),
             weight_decay=0.005
         )
     
-        bestAcc = 0
-        averAcc = 0
-        num = 0
-        Y_true = 0
-        Y_pred = 0
         epochs_acc = []
     
         B = self.args.batch_size
@@ -406,59 +412,31 @@ class ExGAN():
                 outputs_D = self.domain_Discriminator(features_s_Adver.float())
                 Adver_domain_labels_loss = self.criterion(outputs_D, domain_label)
                 slc_loss = self.criterion(outputs, label)
-                loss = slc_loss + MMD_loss + Adver_domain_labels_loss
+                loss = (slc_loss + self.beta * MMD_loss
+                        + self.gamma * Adver_domain_labels_loss)
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 self.optimizer.step()
 
-            out_epoch = time.time()
+            train_pred = torch.max(outputs, 1)[1]
+            train_acc = float((train_pred == label).cpu().numpy().astype(int).sum()) / float(label.size(0))
+            epochs_acc.append(train_acc)
+            print('Epoch:', e,
+                  '  Train loss: %.4f' % loss.item(),
+                  '  cls: %.4f' % slc_loss.detach().cpu().numpy(),
+                  '  MMD: %.4f' % MMD_loss.item(),
+                  '  adv: %.4f' % Adver_domain_labels_loss.detach().cpu().numpy(),
+                  '  lambda_adv: %.4f' % lambda_adv,
+                  '  Source train acc: %.4f' % train_acc)
 
-            if (e + 1) % 1 == 0:
-                start_test = True
-                with torch.no_grad():        
-                    self.model.eval()
-        
-                    for batch_idx, tar_data in enumerate(test_dataset):
-                        Tx = tar_data['Tx']
-                        Ty = tar_data['Ty']
-                        Tx = Tx.float().cuda()
-                        Tx = Tx.view(Tx.size(0), Tx.size(1), -1)  # 自动计算 62×5=310 [批次，3，310]
-                        Tok, Cls = self.model(Tx)
-                        if start_test:
-                            all_output = Cls.float().cpu()
-                            all_label = Ty.float()
-                            start_test = False
-                        else:
-                            all_output = torch.cat((all_output, Cls.float().cpu()), 0)
-                            all_label = torch.cat((all_label, Ty.float()), 0)
-                        loss_test = self.criterion_cls(Cls.float().cpu(), Ty.long())
-                torch.cuda.empty_cache()  # 清理GPU缓存
-                y_pred = torch.max(all_output, 1)[1]
-                acc = float((y_pred == all_label).cpu().numpy().astype(int).sum()) / float(all_label.size(0))
-                train_pred = torch.max(outputs, 1)[1]
-                train_acc = float((train_pred == label).cpu().numpy().astype(int).sum()) / float(label.size(0))
-                epochs_acc.append(acc)
-                print('Epoch:', e,
-                      '  Train loss: %.4f' % loss.item(),
-                      '  cls: %.4f' % slc_loss.detach().cpu().numpy(),
-                      '  MMD: %.4f' % MMD_loss.item(),
-                      '  adv: %.4f' % Adver_domain_labels_loss.detach().cpu().numpy(),
-                      '  lambda_adv: %.4f' % lambda_adv,
-                      '  Train acc: %.4f' % train_acc,
-                      '  Test acc: %.4f' % acc)
-             
-                num = num + 1
-                averAcc = averAcc + acc
-                if acc > bestAcc:
-                    bestAcc = acc
-                    Y_true = Ty
-                    Y_pred = y_pred
-
-        averAcc = averAcc / num
-        print('The average accuracy of n_epochs%d is:' %(e+1), averAcc)
-        print('The best accuracy of n_epochs%d is:' %(e+1), bestAcc)
+        # The target labels are read only once for the final, held-out report.
+        final_acc, _, _, _, y_true, y_pred = self.evaluate_target(test_dataset)
+        Y_true = torch.as_tensor(y_true)
+        Y_pred = torch.as_tensor(y_pred)
+        print('Fixed pre-training epochs:', self.n_epochs)
+        print('Final target accuracy:', final_acc)
      
-        return bestAcc, averAcc, Y_true, Y_pred, X, Y, self.model, epochs_acc
+        return final_acc, final_acc, Y_true, Y_pred, X, Y, self.model, epochs_acc
 
 
     def fine_tuning(self, args, X, Y, model):
@@ -468,7 +446,6 @@ class ExGAN():
     
         len_train_source = len(dset_loaders["source"])
         len_train_target = len(dset_loaders["target"])
-        best_acc = 0.0
         final_acc = 0
         final_f1 = 0
         final_auc = 0
@@ -478,31 +455,6 @@ class ExGAN():
         iter_auc_list = []
     
         for i in range(args.max_iter2):
-            if i % 1 == 0:
-                with torch.no_grad():
-                    model.eval()
-                    best_acc, best_f1, best_auc, best_mat = self.test_suda(dset_loaders, model)
-    
-                    # 记录当前这一轮的结果
-                    iter_acc_list.append(best_acc)
-                    iter_f1_list.append(best_f1)
-                    iter_auc_list.append(best_auc)
-    
-                    if final_acc < best_acc:
-                        final_acc = best_acc
-                        final_f1 = best_f1
-                        final_auc = best_auc
-                        final_mat = best_mat
-                    if i == 0:
-                        log_str = "iter: {:05d}, \t accuracy: {:.4f} \t f1: {:.4f} \t auc: {:.4f}".format(
-                            i, best_acc, best_f1, best_auc
-                        )
-                    else:
-                        log_str = "iter: {:05d}, \t accuracy: {:.4f} \t f1: {:.4f} \t auc: {:.4f} \t loss: {:.4f}".format(
-                            i, best_acc, best_f1, best_auc, total_loss.item()
-                        )
-                    print(log_str)
-    
             model.train()
             if i % len_train_source == 0:
                 iter_source = iter(dset_loaders["source"])
@@ -510,136 +462,85 @@ class ExGAN():
                 iter_target = iter(dset_loaders["target"])
     
             inputs_source_, labels_source = next(iter_source)
-            inputs_target_, ture_labels_target = next(iter_target)
+            inputs_target_, _ = next(iter_target)
     
             inputs_source_ = inputs_source_.type(torch.FloatTensor)
             labels_source = labels_source.type(torch.LongTensor)
             inputs_target_ = inputs_target_.type(torch.FloatTensor)
-            ture_labels_target = ture_labels_target.type(torch.LongTensor)
-            inputs_source, labels_source = inputs_source_.cuda(), labels_source.cuda()
-            inputs_target, ture_labels_target = inputs_target_.cuda(), ture_labels_target.cuda()
+            inputs_source, labels_source = inputs_source_.to(self.device), labels_source.to(self.device)
+            inputs_target = inputs_target_.to(self.device)
             inputs_source = inputs_source.view(inputs_source.size(0), inputs_source.size(1), -1)
             inputs_target = inputs_target.view(inputs_target.size(0), inputs_target.size(1), -1)
             features_source, outputs_source = model(inputs_source)
-            features_target, outputs_target = model(inputs_target)
+            model(inputs_target)
             classifier_loss = self.criterion_cls(outputs_source, labels_source.flatten())
             total_loss = classifier_loss   # + 2 * CORAL
     
             self.optimizer.zero_grad()
             total_loss.backward()
             self.optimizer.step()
-    
+
+        # Select no checkpoint using target labels; report only the fixed final iteration.
+        final_acc, final_f1, final_auc, final_mat = self.test_suda(dset_loaders, model)
+        iter_acc_list.append(final_acc)
+        iter_f1_list.append(final_f1)
+        iter_auc_list.append(final_auc)
+        print("Fixed fine-tuning iterations: {:d}; final target accuracy: {:.4f} \t weighted F1: {:.4f} \t AUC: {:.4f}".format(
+            args.max_iter2, final_acc, final_f1, final_auc
+        ))
         return final_acc, final_f1, final_auc, final_mat, model, iter_acc_list, iter_f1_list, iter_auc_list
 
 def main(args):
-    pre_train = []
-    tuning = []
-    result_write = open(r"E:\Research\第八篇论文科研\code\quant_Gate_2_forMI\snapshot.txt", "w")
+    subject_count = 9
+    seed_values = [args.seed + i for i in range(args.num_seeds)]
+    pre_train, tuning, total_acc = [], [], []
+    all_subject_ft_acc, all_subject_ft_f1, all_subject_ft_auc = [], [], []
 
-    total_acc = []
+    with open("snapshot.txt", "w") as result_write:
+        for seed_n in seed_values:
+            for i in range(subject_count):
+                args.target = subject_count - i
+                random.seed(seed_n)
+                np.random.seed(seed_n)
+                torch.manual_seed(seed_n)
+                if torch.cuda.is_available():
+                    torch.cuda.manual_seed_all(seed_n)
 
-    all_subject_ft_acc = []
-    all_subject_ft_f1 = []
-    all_subject_ft_auc = []
+                print('Subject %d (seed %d)' % (i + 1, seed_n))
+                result_write.write('Subject %d, seed %d\n' % (i + 1, seed_n))
+                exgan = ExGAN(args, i + 1, 1)
+                ba, aa, _, _, X, Y, model, epochs_acc = exgan.train(1)
+                total_acc.append(epochs_acc)
+                final_acc, final_f1, final_auc, _, model, iter_acc, iter_f1, iter_auc = exgan.fine_tuning(args, X, Y, model)
+                all_subject_ft_acc.append(iter_acc)
+                all_subject_ft_f1.append(iter_f1)
+                all_subject_ft_auc.append(iter_auc)
+                pre_train.append(ba)
+                tuning.append(final_acc)
+                result_write.write('pre_training acc: %.6f\n' % ba)
+                result_write.write('fine_tuning acc: %.6f\n' % final_acc)
 
-    for i in range(9):
-        args.target = 9 - i
-        seed_n = 1
-
-        result_write.write('--------------------------------------------------\n')
-        random.seed(seed_n)
-        np.random.seed(seed_n)
-        torch.manual_seed(seed_n)
-        torch.cuda.manual_seed(seed_n)
-        torch.cuda.manual_seed_all(seed_n)
-
-        print('Subject %d' % (i + 1))
-        result_write.write('Subject ' + str(i + 1) + ' : ' + 'Seed is: ' + str(seed_n) + "\n")
-
-        ba = 0
-        aa = 0
-        pre_train_Acc = 0
-        averAcc = 0
-
-        exgan = ExGAN(args, i + 1, 1)
-
-        ba, aa, _, _, X, Y, model, epochs_acc = exgan.train(1)
-        total_acc.append(epochs_acc)
-
-        final_acc, final_f1, final_auc, final_mat, model, iter_acc_list, iter_f1_list, iter_auc_list = exgan.fine_tuning(args, X, Y, model)
-
-        all_subject_ft_acc.append(iter_acc_list)
-        all_subject_ft_f1.append(iter_f1_list)
-        all_subject_ft_auc.append(iter_auc_list)
-
-        result_write.write('pre_training acc is:' + str(ba) + "\n")
-        result_write.write('fine_tuning acc is:' + str(final_acc) + "\n")
-
-        pre_train_Acc = ba
-        tuning_Acc = final_acc
-
-        pre_train.append(pre_train_Acc)
-        tuning.append(tuning_Acc)
-
-        print('pre_training acc is:', pre_train)
-        print('fine_tuning acc is:', tuning)
-
-
-    total_acc = np.array(total_acc)
-    epoch_mean_acc = np.mean(total_acc, axis=0)
-    print(f"所有epochs的平均准确率: {epoch_mean_acc}")
-
-    best_epoch = np.argmax(epoch_mean_acc) + 1
-    best_epoch_acc = epoch_mean_acc[best_epoch - 1]
-    print(f"\n最佳epoch为: {best_epoch}，对应平均准确率 = {best_epoch_acc:.4f}")
-
-    all_subject_ft_acc = np.array(all_subject_ft_acc)   # [9, max_iter2]
-    all_subject_ft_f1 = np.array(all_subject_ft_f1)
-    all_subject_ft_auc = np.array(all_subject_ft_auc)
-
-    mean_ft_acc = np.mean(all_subject_ft_acc, axis=0)   # [max_iter2]
-    mean_ft_f1 = np.mean(all_subject_ft_f1, axis=0)
-    mean_ft_auc = np.mean(all_subject_ft_auc, axis=0)
-
-    best_ft_iter = np.argmax(mean_ft_acc) + 1
-    best_ft_acc = mean_ft_acc[best_ft_iter - 1]
-    best_ft_f1 = mean_ft_f1[best_ft_iter - 1]
-    best_ft_auc = mean_ft_auc[best_ft_iter - 1]
-    best_ft_idx = best_ft_iter - 1  
-    
-    subject_best_iter_acc = all_subject_ft_acc[:, best_ft_idx]
-    subject_best_iter_f1  = all_subject_ft_f1[:, best_ft_idx]
-    subject_best_iter_auc = all_subject_ft_auc[:, best_ft_idx]
-    print("\n================= Fine-tuning平均结果 =================")
-    print(f"每个微调iter在9个受试者上的平均准确率: {mean_ft_acc}")
-    print(f"最佳微调iter为: {best_ft_iter}")
-    print(f"该iter的平均准确率 = {best_ft_acc:.4f}")
-    print(f"该iter的平均F1 = {best_ft_f1:.4f}")
-    print(f"该iter的平均AUC = {best_ft_auc:.4f}")
-    print("\n================= 每位受试者在最佳微调iter上的结果 =================")
-    for subj in range(9):
-        print(
-            f"Subject {subj+1}: "
-            f"acc = {subject_best_iter_acc[subj]:.4f}, "
-            f"f1 = {subject_best_iter_f1[subj]:.4f}, "
-            f"auc = {subject_best_iter_auc[subj]:.4f}"
-        )
-        pre_ave = sum(pre_train) / len(pre_train)
-        tuning_ave = sum(tuning) / len(tuning)
-
-    print('------------------------pre-training result--------------------------', pre_train)
-    print('------------------------fin-tuning result--------------------------', tuning)
-    print('------------------------pre-training average result--------------------------', pre_ave)
-    print('------------------------fin-tuning average result--------------------------', tuning_ave)
-
-    result_write.write('--------------------------------------------------\n')
-    result_write.write(f"All accuracy is: {pre_train}\n")
-    result_write.write(f"All subject Aver accuracy is: {tuning}\n")
-    result_write.write(f"Best fine-tuning iter across 9 subjects: {best_ft_iter}\n")
-    result_write.write(f"Best fine-tuning mean acc: {best_ft_acc:.4f}\n")
-    result_write.write(f"Best fine-tuning mean f1: {best_ft_f1:.4f}\n")
-    result_write.write(f"Best fine-tuning mean auc: {best_ft_auc:.4f}\n")
-    result_write.close()
+    total_acc = np.asarray(total_acc, dtype=float)
+    print('Mean source-train accuracy by fixed epoch:', total_acc.mean(axis=0))
+    ft_acc = np.asarray(all_subject_ft_acc, dtype=float)
+    ft_f1 = np.asarray(all_subject_ft_f1, dtype=float)
+    ft_auc = np.asarray(all_subject_ft_auc, dtype=float)
+    mean_ft_acc = float(ft_acc.mean())
+    mean_ft_f1 = float(ft_f1.mean())
+    mean_ft_auc = float(ft_auc.mean())
+    print('\n================= Final held-out target results =================')
+    print('Fixed fine-tuning iterations:', args.max_iter2)
+    print('Mean accuracy = %.4f' % mean_ft_acc)
+    print('Mean weighted F1 = %.4f' % mean_ft_f1)
+    print('Mean AUC = %.4f' % mean_ft_auc)
+    result_write_path = "snapshot.txt"
+    with open(result_write_path, "a") as result_write:
+        result_write.write('Seeds: %s\n' % seed_values)
+        result_write.write('Fixed pre-training epochs: %d\n' % args.n_epochs)
+        result_write.write('Fixed fine-tuning iterations: %d\n' % args.max_iter2)
+        result_write.write('Mean final target accuracy: %.6f\n' % mean_ft_acc)
+        result_write.write('Mean final target weighted F1: %.6f\n' % mean_ft_f1)
+        result_write.write('Mean final target AUC: %.6f\n' % mean_ft_auc)
 
 
 
@@ -663,11 +564,14 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter2', type=int, default=20)
     parser.add_argument('--batch_size',type=int,default=50)
     parser.add_argument('--batch_size_fine',type=int,default=144)
-    parser.add_argument('--seed', type=int, default=123, help="random seed number ")
+    parser.add_argument('--seed', type=int, default=1, help="first of five random seeds")
+    parser.add_argument('--num_seeds', type=int, default=5, help="number of independent random seeds")
     parser.add_argument('--hidden_size', type=int, default=512, help="Bottleneck (features) dimensionality")
     parser.add_argument('--bottleneck_dim', type=int, default=256, help="Bottleneck (features) dimensionality")
     parser.add_argument('--session', type=int, default=1, help="random seed number ")
-    parser.add_argument('--gamma', type=int, default=1, help="gamma for Adver_network ")
+    parser.add_argument('--n_epochs', type=int, default=100, help="fixed pre-training epochs")
+    parser.add_argument('--beta', type=float, default=1.0, help="MMD loss weight")
+    parser.add_argument('--gamma', type=float, default=1.0, help="adversarial loss weight")
     parser.add_argument('--file_path', type=str, default="E:/Research/EEGDataSet/BNCI2014012/saved_loso_window_logmap_gfk", help="Path from the current dataset")
     parser.add_argument('--log_file')
     parser.add_argument('--n_classes', type=int, default=2)
