@@ -1,0 +1,28 @@
+{
+  "dataset": "JSED",
+  "model_name": "Q-Mixer (private clinical configuration)",
+  "code_public": false,
+  "status": "author-reported",
+  "reported_trainable_parameters": 22600,
+  "unit": "scalar parameters",
+  "scope": "Trainable parameters of the JSED Q-Mixer model reported in the manuscript. Optimizer state, gradients, non-trainable buffers, input data, and preprocessing artifacts are excluded.",
+  "counting_rule": "sum(parameter.numel() for parameter in model.parameters() if parameter.requires_grad)",
+  "public_model_relationship": "This value does not describe any of the four public D=512 entry points. Those entry points are counted by tools/count_parameters.py and have separate configuration-dependent totals.",
+  "layer_manifest": null,
+  "flops": null,
+  "inference_latency": null,
+  "checkpoint_sha256": null,
+  "verification": {
+    "independently_reproducible": false,
+    "reason": "The JSED data and its private model implementation are not included in this repository. A scalar total cannot reconstruct layer names, tensor shapes, bottleneck width, depth, discriminator inclusion, FLOPs, or latency.",
+    "minimum_release_needed": [
+      "versioned model source or an executable reviewer-only archive",
+      "per-layer parameter names, tensor shapes, and trainable flags",
+      "model configuration including input feature width, D, depth, and classifier/discriminator scope",
+      "checkpoint SHA-256 and the exact software commit",
+      "FLOPs definition and input shape",
+      "latency device, batch size, warm-up, repetition count, and timing code"
+    ]
+  },
+  "reviewer_note": "The public code does not need to contain the literal number 22600 for a reviewer or an automated checker to identify a contradiction: parameter counts follow directly from visible layer dimensions. The correct remedy is to separate the private JSED claim from public D=512 configurations and release the manifest or executable private implementation needed to verify it."
+}

@@ -127,8 +127,11 @@ for all four entry points with:
 python tools/count_parameters.py
 ```
 
-The D=512 Q-Mixer configurations are not labeled as a 22.6K-parameter JSED
-model; that number requires a separately versioned JSED implementation.
+The four public D=512 entry points are not the private JSED model. The
+manuscript's 22.6K JSED value is recorded separately in
+`JSED_PARAMETER_MANIFEST.json` with its scope and verification status. It must
+not be used as the parameter count of these public entry points. See
+`DATASET_AND_PREPROCESSING.md` for the acquisition and preprocessing disclosure.
 
 ---
 
@@ -176,7 +179,7 @@ Removing any component degrades performance:
 - ✅ Propose a **quaternion spatiotemporal mixer** for EEG decoding  
 - ✅ Introduce **explicit structured coupling** instead of implicit learning  
 - ✅ Achieve **robust cross-subject generalization** across 6 datasets  
-- ✅ Publish exact model configurations and reproducible parameter accounting
+- ✅ Publish exact public model configurations and auditable parameter accounting
 
 ---
 

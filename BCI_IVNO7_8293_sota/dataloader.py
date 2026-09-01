@@ -5,6 +5,19 @@ from datasets_ import Dataset
 # from modules import PseudoLabeledData
 
 
+class UnlabeledDataset(torch.utils.data.Dataset):
+    """Target samples for optimization; deliberately has no label field."""
+
+    def __init__(self, data):
+        self.data = torch.as_tensor(data, dtype=torch.float32)
+
+    def __len__(self):
+        return self.data.size(0)
+
+    def __getitem__(self, index):
+        return self.data[index]
+
+
 def z_score(X):
     mean = np.mean(X, axis=0)
     std = np.std(X, axis=0)
@@ -54,14 +67,14 @@ class PairedData(object):
             if not self.stop_src[i]:
                 stop = False
 
-        trg_x, trg_y = None, None
+        trg_x = None
         try:
-            trg_x, trg_y = next(self.data_loader_trg_iter)
+            trg_x = next(self.data_loader_trg_iter)
         except StopIteration:
-            if trg_x is None or trg_y is None:
+            if trg_x is None:
                 self.stop_trg = True
                 self.data_loader_trg_iter = iter(self.data_loader_trg)
-                trg_x, trg_y = next(self.data_loader_trg_iter)
+                trg_x = next(self.data_loader_trg_iter)
 
         if (stop and self.stop_trg) or self.iter > self.max_dataset_size:
             for i in range(self.num_domains_src):
@@ -119,8 +132,9 @@ class UnalignedDataLoader():
         #################################################
 
 
-        # Store TARGET DOMAIN
-        dataset_target = Dataset(Tx, Ty)
+        # Store unlabeled TARGET DOMAIN. Ty is retained in the signature for
+        # compatibility but is intentionally not passed to this loader.
+        dataset_target = UnlabeledDataset(Tx)
         data_loader_trg = torch.utils.data.DataLoader(dataset_target, batch_size=batch_size_trg, shuffle=shuffle_testing, num_workers=0, drop_last=drop_last_testing)
 
         self.dataset_t = dataset_target

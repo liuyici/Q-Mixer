@@ -541,7 +541,8 @@ def fine_tuning_load_XY(args, X, Y):
 
         # dataset
         source_tr = TensorDataset(Sx_tensor, Sy_tensor)
-        target_tr = TensorDataset(Tx_tensor, Ty_tensor)
+        # Keep target labels in the held-out loader only; optimization sees Tx.
+        target_tr = TensorDataset(Tx_tensor)
         target_ts = TensorDataset(Vx_tensor, Vy_tensor)
 
         # dataloader
@@ -829,7 +830,8 @@ def fine_tuning_load_XY_MI(args, X, Y):
 
         # dataset
         source_tr = TensorDataset(Sx_tensor, Sy_tensor)
-        target_tr = TensorDataset(Tx_tensor, Ty_tensor)
+        # Keep target labels in the held-out loader only; optimization sees Tx.
+        target_tr = TensorDataset(Tx_tensor)
         target_ts = TensorDataset(Vx_tensor, Vy_tensor)
 
         # dataloader

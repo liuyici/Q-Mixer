@@ -18,13 +18,19 @@
     "script": "tools/count_parameters.py",
     "scope": "all trainable QuantGate and domain-discriminator parameters, including biases and normalization affine parameters",
     "unit": "scalar trainable parameters",
-    "reported_22_6K_status": "not claimed for these D=512 Q-Mixer entry points; a 22.6K JSED result requires its own separately versioned implementation and configuration"
+    "reported_22_6K_parameters": 22600,
+    "reported_22_6K_scope": "private JSED Q-Mixer trainable model only",
+    "reported_22_6K_status": "author-reported for the private JSED implementation only; it is not the parameter count of any D=512 entry point",
+    "jsed_manifest": "JSED_PARAMETER_MANIFEST.json",
+    "jsed_independent_verification": "blocked until the private model is shared with reviewers or its complete layer manifest and checkpoint hash are released"
   },
   "optimization": {
     "optimizer": "Adam",
     "betas": [0.5, 0.999],
-    "beta_mmd": 1.0,
-    "gamma_adversarial": 1.0,
+    "loss": "L = L_cls + beta * L_adv + gamma * L_mmd",
+    "beta_adversarial": 0.01,
+    "gamma_mmd": 0.5,
+    "target_pseudo_labels": "hard argmax one-hot for class-conditional MMD",
     "seeds": [1, 2, 3, 4, 5]
   },
   "metrics": {

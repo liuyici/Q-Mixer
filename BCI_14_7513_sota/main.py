@@ -284,8 +284,9 @@ class ExGAN():
         self.lr2 = 0.0002
         self.b1 = 0.5
         self.b2 = 0.999
-        self.beta = getattr(args, 'beta', 1.0)
-        self.gamma = getattr(args, 'gamma', 1.0)
+        # Paper notation: L = L_cls + beta * L_adv + gamma * L_mmd.
+        self.beta_adv = getattr(args, 'beta', 0.01)
+        self.gamma_mmd = getattr(args, 'gamma', 0.5)
         self.radius = 10
         self.criterion_cls = torch.nn.CrossEntropyLoss().to(self.device)
         self.model = QuantGate(emb_size=120, depth=6, bottleneck_dim=128, n_classes=2).float().to(self.device)
@@ -392,7 +393,11 @@ class ExGAN():
                 tok_s = tok.view(4, B, -1)      # [14, B, feat]
                 lab_s = label.view(4, B)        # [14, B]
                 tgt_tok_eq = tok_target          # [B, feat]
-                tgt_prob_eq = pre_target         # [B, C]
+                # The paper uses hard pseudo-labels for class-conditional MMD.
+                # One-hot encoding keeps Weight.cal_weight's expected shape.
+                tgt_prob_eq = F.one_hot(
+                    pre_target.argmax(dim=1), num_classes=self.args.num_class
+                ).float()                       # [B, C]
     
                 mmd_b_vals, mmd_t_vals = [], []
                 for d in range(4):
@@ -423,8 +428,8 @@ class ExGAN():
                 outputs_D = self.domain_Discriminator(features_s_Adver.float())
                 Adver_domain_labels_loss = self.criterion(outputs_D, domain_label)
                 slc_loss = self.criterion(outputs, label)
-                loss = (slc_loss + self.beta * MMD_loss
-                        + self.gamma * Adver_domain_labels_loss)
+                loss = (slc_loss + self.beta_adv * Adver_domain_labels_loss
+                        + self.gamma_mmd * MMD_loss)
                 self.optimizer.zero_grad(set_to_none=True)
                 loss.backward()
                 self.optimizer.step()
@@ -474,7 +479,7 @@ class ExGAN():
                 iter_target = iter(dset_loaders["target"])
     
             inputs_source_, labels_source = next(iter_source)
-            inputs_target_, _ = next(iter_target)
+            inputs_target_ = next(iter_target)
     
             inputs_source_ = inputs_source_.type(torch.FloatTensor)
             labels_source = labels_source.type(torch.LongTensor)
@@ -582,8 +587,8 @@ if __name__ == "__main__":
     parser.add_argument('--bottleneck_dim', type=int, default=256, help="Bottleneck (features) dimensionality")
     parser.add_argument('--session', type=int, default=1, help="random seed number ")
     parser.add_argument('--n_epochs', type=int, default=100, help="fixed pre-training epochs")
-    parser.add_argument('--beta', type=float, default=1.0, help="MMD loss weight")
-    parser.add_argument('--gamma', type=float, default=1.0, help="adversarial loss weight")
+    parser.add_argument('--beta', type=float, default=0.01, help="adversarial loss weight")
+    parser.add_argument('--gamma', type=float, default=0.5, help="MMD loss weight")
     parser.add_argument('--file_path', type=str, default="E:/Research/EEGDataSet/BNCI2014002/feature", help="Path from the current dataset")
     parser.add_argument('--log_file')
     parser.add_argument('--n_classes', type=int, default=2)
