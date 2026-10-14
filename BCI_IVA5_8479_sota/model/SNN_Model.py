@@ -52,27 +52,19 @@ class SNN_Model(torch.nn.Module):
         self.fc2 = SLR_layer(128, cfg.n_classes)
 
     def forward(self, inputs):
-        """
-        :param inputs: [batch, input_size, t]
-        :return:
-        """
-        # 输入: [batch, 12, 310] → [batch, 310, 12]
+        """Map [batch, time, features] inputs to logits and latent features."""
         inputs = rearrange(inputs, 'b c h -> b h c')
 
-        # 初始化状态
         axon1_states = self.axon1.create_init_states()
         snn1_states = self.snn1.create_init_states()
 
-        # 前向传播
-        axon1_out, axon1_states = self.axon1(inputs, axon1_states)   # [B, 310, 12] → [B, 310]
-        spike_l1, snn1_states = self.snn1(axon1_out, snn1_states)    # [B, 128, 12]
-        drop_1 = self.dropout1(spike_l1)                              # dropout
+        axon1_out, axon1_states = self.axon1(inputs, axon1_states)
+        spike_l1, snn1_states = self.snn1(axon1_out, snn1_states)
+        drop_1 = self.dropout1(spike_l1)
 
-        # 展平 + 分类
-        spike_fea = drop_1.reshape(drop_1.size(0), -1)               # [B, 128*window_size]
-        feat = self.feat(spike_fea)                                     # [B, 128]
+        spike_fea = drop_1.reshape(drop_1.size(0), -1)
+        feat = self.feat(spike_fea)
         out = self.fc2(feat)
-        #out = self.linear(spike_fea)                                 # [B, n_classes]
 
         return out, feat
-    
+

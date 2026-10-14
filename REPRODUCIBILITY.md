@@ -1,19 +1,66 @@
-# Reproducibility Notes
+# Implementation notes
 
-The four dataset entry points use the same evaluation protocol.
+## Training and evaluation
 
-- Pre-training runs for the fixed `--n_epochs` value. The target labels are not read in the epoch loop.
-- Fine-tuning runs for the fixed `--max_iter2` value. No target checkpoint or iteration is selected by accuracy, F1, or AUC.
-- Target labels are consumed once, after optimization, for the held-out report only.
-- The default seed schedule is five independent seeds: `1, 2, 3, 4, 5` (`--seed` is the first seed and `--num_seeds` controls the count).
-- The objective is `L = L_cls + beta * L_adv + gamma * L_mmd`. The four entry points default to `beta=0.01` (adversarial) and `gamma=0.5` (MMD); both remain overrideable through the CLI.
-- Class-conditional MMD uses hard target pseudo-labels: `argmax(softmax(logits))`, encoded as one-hot vectors. Target ground-truth labels are never passed to this loss.
-- The optimization target loader returns only `Tx`; `Ty` exists only in the separate held-out test loader used after training.
-- F1 is weighted. AUC uses softmax probabilities: the positive-class probability for binary tasks and one-vs-rest probabilities for multiclass tasks.
-- The quaternion tuple is ordered `(temporal, shared, interaction, spatial)` and uses `D=512`.
-- The interaction component is the Hamilton product of the normalized channel and temporal vectors, implemented in each `main.py` as `hamilton_product(c, t)`.
-- Parameter counts are generated from the instantiated models, not inferred from the paper: `python tools/count_parameters.py`. The report lists every layer and includes biases and normalization parameters for both `QuantGate` and the domain discriminator. The public D=512 entry points are separate from the private JSED model. The manuscript's 22.6K number is recorded as an author-reported JSED value in `JSED_PARAMETER_MANIFEST.json`; it is not independently executable until the private architecture or a complete layer manifest/checkpoint hash is supplied.
+The four public entry points use transductive leave-one-subject-out adaptation:
 
-Dataset acquisition and preprocessing disclosures, including the information supported by the supplied clinical protocol, are collected in `DATASET_AND_PREPROCESSING.md`. That document deliberately marks facts that are not present in the protocol or public code instead of fabricating demographic counts or rater statistics.
+1. Pre-train on all source subjects with classification, source-domain
+   adversarial loss, and source-target MMD.
+2. Fine-tune with source classification loss. Unlabeled target forward passes
+   update batch-normalization statistics.
+3. Evaluate the fixed final model of each stage. Target metrics do not select
+   checkpoints or stopping iterations.
 
-The exact defaults are recorded in `PAPER_CONFIG.json`. The final report is written to `snapshot.txt` in the selected dataset directory.
+Pre-training uses label-smoothed cross-entropy (`alpha=0.1`), Adam with
+`lr=0.002`, and betas `(0.5, 0.999)`. Fine-tuning uses ordinary cross-entropy and
+Adam with `lr=0.0002`. The adversarial and MMD weights are `beta=0.01` and
+`gamma=0.5`. Class-conditional MMD uses hard target pseudo-labels.
+
+| Entry point | Pre-training epochs | Fine-tuning steps | Source batch per subject | Fine-tuning batch |
+| --- | ---: | ---: | ---: | ---: |
+| `BCI_14_7513_sota` | 100 | 33 | 50 | 32 |
+| `BCI_2a9_7922_sota` | 100 | 20 | 50 | 144 |
+| `BCI_IVNO7_8293_sota` | 15 | 55 | 50 | 32 |
+| `BCI_IVA5_8479_sota` | 100 | 102 | 50 | 32 |
+
+The default seeds are 1-5. The final target metrics are accuracy, weighted F1,
+and probability-based AUC. Their averages pool subjects and seeds.
+The older `snapshot.txt` logs remain in Git history; new logs are ignored by Git.
+
+## Differences from the manuscript
+
+| Manuscript | Public implementation |
+| --- | --- |
+| Section III-B, Eq. (9): adjacent groups of four, quaternion branch layers, HModReLU | Real-valued temporal and feature-axis linear layers; no adjacent-group construction or HModReLU |
+| Section III-C, Eq. (11): direct components `[Ht, (Hc+Ht)/2, Hc⊗Ht, Hc]` | Layer normalization and four independent quaternion projections reduce each component from `D` to `D/4` before assembly |
+| Table I / Eq. (17): standard linear classifier | Residual mixer blocks, a multi-layer bottleneck, and a normalized-weight `SLR_layer` classifier |
+| Eq. (18): class-conditional alignment | A mixture of marginal and class-conditional RBF-MMD, plus label smoothing during pre-training |
+| Section IV-C: 50 MI epochs, Adam at `0.001`; BNCI2014001 batch 144 | The two-stage schedules and batch sizes in the table above |
+| Section IV-C: mean and standard deviation across five seeds | The current report gives pooled means; it does not compute across-seed standard deviations |
+
+The MMD mixture is `0.5 * marginal + 0.5 * conditional` for BNCI2014002, and
+`marginal + conditional` for the other three entry points. Blankertz2007 and
+MI5 use a single temporal window, so those runs do not mix multiple temporal
+windows.
+
+## Corrections in this revision
+
+- Use all 13 source subjects in the BNCI2014002 pre-training fold.
+- Unpack the single-tensor target batch during fine-tuning.
+- Normalize smoothed domain labels by the discriminator's class count.
+- Preserve the scalar component and normalize rotation weights to unit length;
+  zero weights use the identity rotation.
+- Log the actual held-out subject ID and honor the selected device.
+
+These corrections change execution or numerical results. Previously reported
+accuracies have not been revalidated with the corrected code.
+
+## Parameter counts
+
+Run `python tools/count_parameters.py` for per-layer and total trainable counts.
+The model and domain discriminator are counted separately. Expected totals are
+stored in `PAPER_CONFIG.json`.
+
+The manuscript's 22.6K value belongs to the private JSED configuration.
+`JSED_PARAMETER_MANIFEST.json` records that reported value; a JSED architecture
+or checkpoint is not included here.

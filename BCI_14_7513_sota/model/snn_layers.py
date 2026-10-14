@@ -23,9 +23,6 @@ class threshold(torch.autograd.Function):
     @staticmethod
     def forward(ctx, input, sigma):
         # type: (Tensor, Tuple[Tensor, Tensor, Tensor, Tensor]) -> Tuple[Tensor, Tuple[Tensor, Tensor, Tensor, Tensor]]
-        """
-
-        """
         ctx.save_for_backward(input)
         ctx.sigma = sigma
 
@@ -36,9 +33,6 @@ class threshold(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_output):
-        """
-
-        """
         input, = ctx.saved_tensors
         sigma = ctx.sigma
 
@@ -263,7 +257,6 @@ class snn_cell(torch.nn.Module):
 
         weighted_psp = self.weight(current_psp) * self.v_0
 
-        # current_v = prev_v * self.decay_v + weighted_psp - prev_reset
         current_v = weighted_psp - prev_reset
 
         threshold_function = threshold.apply
@@ -306,7 +299,6 @@ class snn_layer(torch.nn.Module):
 
         # unbind along last dimension
         inputs = input_spikes.unbind(dim=-1)
-        # length = len(input_spikes)
         spikes = []
 
         #iterate over each time step
@@ -368,7 +360,6 @@ class synapse_cell(torch.nn.Module):
         self.decay_s = torch.nn.Parameter(torch.exp(-1 / self.tau_s))
         self.decay_s.requires_grad = train_tau_s
 
-        # self.transform = torch.nn.Linear(output_size, 1)
 
     def forward(self, current_spike, prev_states):
         """
@@ -381,8 +372,7 @@ class synapse_cell(torch.nn.Module):
         prev_psp_m, prev_psp_s = prev_states
 
         # prev_psp_m/prev_psp_s shape is [batch, synapse_num, neuron_num]
-        # current_spike shape is [batch, synapse_num], to broadcase,
-        # need to unsqueeze it to [batch, synapse, 1]
+        # Broadcast spikes from [batch, synapse] to [batch, synapse, neuron].
         current_psp_m = prev_psp_m * self.decay_m + current_spike.unsqueeze(dim=-1)
         current_psp_s = prev_psp_s * self.decay_s + current_spike.unsqueeze(dim=-1)
         current_psp = current_psp_m - current_psp_s
@@ -525,7 +515,7 @@ class dual_exp_iir_layer(torch.nn.Module):
         """
 
         # unbind along last dimension
-        inputs = list(input_spikes.unbind(dim=-1)) # unbind()移除指定维(最后一维)后，返回一个元组，包含了沿着指定维切片后的各个切片。
+        inputs = list(input_spikes.unbind(dim=-1))
         spikes = []
         length = len(inputs)
 
@@ -652,13 +642,11 @@ class first_order_low_pass_layer(torch.nn.Module):
         """
 
         # unbind along last dimension
-        inputs = input_spikes # list(input_spikes.unbind(dim=-1))
+        inputs = input_spikes
         spikes = []
         length = len(inputs)
 
-       # for i in range(length):
         spike, states = self.first_order_low_pass_cell(inputs, states)
-            #spikes += [spike]
         return spike, states
 
     def create_init_states(self):
@@ -805,7 +793,7 @@ class neuron_cell(torch.nn.Module):
             weight = torch.empty([input_size,neuron_number])
             torch.nn.init.xavier_uniform(weight)
             self.input_type = 'synapse'
-            self.weight = torch.nn.Parameter(weight)                # Parameter(weight) ： weight是可训练参数
+            self.weight = torch.nn.Parameter(weight)
         else:
             self.weight = QuaternionLinear(input_size, neuron_number, bias=train_bias)
         self.tau_m = torch.full((neuron_number,), tau_m, dtype=float)
@@ -887,11 +875,9 @@ class neuron_layer(torch.nn.Module):
         """
 
         # unbind along last dimension
-        inputs = input_spikes#.unbind(dim=-1)
+        inputs = input_spikes
         spikes = []
-        # for i in range(len(inputs)):
         spike, states = self.neuron_cell(inputs.float(), states)
-            # spikes += [spike]
         return spike, states
 
     def create_init_states(self):
@@ -1018,15 +1004,10 @@ class neuron_2d_layer(torch.nn.Module):
         """
 
         # unbind along last dimension
-        # inputs = input_spikes.unbind(dim=-1)
         inputs = input_spikes
         spikes = []
         spike, states = self.neuron_2d_cell(inputs, states)
 
-        # for i in range(len(inputs)):            ## 对每个channel？
-        #     spike, states = self.neuron_2d_cell(inputs[i], states)
-        #     spikes += [spike]
-        # return torch.stack(spikes, dim=-1), states
 
         return spike, states
 
@@ -1256,8 +1237,6 @@ class conv2d_layer(torch.nn.Module):
         :param membrane_filter:
         '''
         super().__init__()
-        # self.input_size = input_size
-        # self.neuron_number = neuron_number
         self.step_num = step_num
         self.batch_size = batch_size
         self.train_bias = train_bias
@@ -1313,11 +1292,8 @@ class maxpooling2d_layer(torch.nn.Module):
         :param batch_size:
         '''
         super().__init__()
-        # self.input_size = input_size
-        # self.neuron_number = neuron_number
         self.step_num = step_num
         self.batch_size = batch_size
-        # self.input_type = input_type
 
         self.maxpooling2d = torch.nn.MaxPool2d(kernel_size,stride,padding,dilation)
 

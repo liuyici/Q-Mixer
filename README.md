@@ -1,203 +1,65 @@
-# Q-Mixer: A Quaternion Spatiotemporal Mixer for Cross-Subject EEG Decoding
+# Q-Mixer
 
----
+Code for *Q-Mixer: A Quaternion Spatiotemporal Mixer for cross-subject EEG-based recognition*.
 
-## 📌 Overview
+![Q-Mixer architecture](fig1.png)
 
-Cross-subject EEG decoding remains fundamentally challenging due to **significant spatiotemporal distribution shifts across subjects**. Existing deep learning methods typically rely on **implicit feature learning**, which:
+## Released experiments
 
-- lacks structural interpretability
-- requires large parameter budgets
-- struggles to explicitly model spatiotemporal coupling
+The repository contains four motor-imagery training entry points. SEED-series
+and JSED training code is not included.
 
-To address these limitations, we propose **Q-Mixer**, a **Quaternion Spatiotemporal Mixing Network**, which introduces **explicit structured coupling** into EEG modeling.
+| Directory | Dataset | Subjects | Input per trial |
+| --- | --- | ---: | --- |
+| `BCI_14_7513_sota` | BNCI2014002 | 14 | `5 x 120` |
+| `BCI_2a9_7922_sota` | BNCI2014001 | 9 | `5 x 253` |
+| `BCI_IVNO7_8293_sota` | Blankertz2007 | 7 | `1 x 1770` |
+| `BCI_IVA5_8479_sota` | MI5, an additional five-subject experiment | 5 | `1 x 7021` |
 
----
+Inputs are precomputed tangent-space features, arranged as time windows by
+feature dimensions. File names and MAT fields are listed in
+[Data preparation](DATASET_AND_PREPROCESSING.md).
 
-## 🧠 Key Idea
+## Run
 
-Instead of treating temporal and spatial dependencies implicitly, Q-Mixer:
+Install PyTorch, NumPy, SciPy, scikit-learn, h5py, pyRiemann, Matplotlib, and
+Pillow. The smoke tests were run with Python 3.11.
 
-> **explicitly decomposes and re-organizes EEG representations into structured components within a quaternion space**
+```bash
+git clone https://github.com/liuyici/Q-Mixer.git
+cd Q-Mixer/BCI_2a9_7922_sota
+python main.py --file_path /path/to/features --device auto --seed 1 --num_seeds 5
+```
 
-Specifically, Q-Mixer models EEG signals as:
+Each fold holds out one subject, trains on the remaining subjects, and uses
+unlabeled target features for adaptation. The default run covers all subjects
+and seeds 1-5. Results are written to `snapshot.txt` in the working directory.
+F1 is weighted; AUC is computed from class probabilities.
 
-- Spatial information  
-- Temporal information  
-- Shared/global information  
-- Interaction information  
+## Configuration
 
-These components are then **jointly coupled and rotated in a hypercomplex space**.
+[PAPER_CONFIG.json](PAPER_CONFIG.json) records the public entry-point defaults.
+The current implementation differs from the manuscript in its branch layers,
+fusion projections, classifier, and training schedule. These differences are
+listed in [Implementation notes](REPRODUCIBILITY.md).
 
----
-
-## 🧩 Model Architecture
-
-### 🔹 Overall Framework (Fig.1)
-
-<p align="center">
-<img src="fig1.png" width="700">
-</p>
-
-Q-Mixer consists of:
-
-- **Temporal branch**: models temporal dynamics
-- **Spatial branch**: captures inter-channel topology
-- **Quaternion Mixer**: structured fusion in hypercomplex space
-- **Gating mechanism**: adaptive feature selection
-
----
-
-### 🔹 Quaternion Mixer (Fig.2)
-
-<p align="center">
-<img src="fig2.png" width="700">
-</p>
-
-Instead of naive fusion (sum / concat), Q-Mixer constructs:
-
-\[
-q = (q_{temporal}, q_{shared}, q_{interaction}, q_{spatial})
-\]
-
-The implementation uses this same tuple order. The interaction component is
-the Hamilton product of the normalized channel and temporal representations.
-
-This enables:
-
-- explicit disentanglement
-- structured coupling
-- higher-order interaction modeling
-
----
-
-## 🚀 Why Quaternion?
-
-Unlike real-valued networks:
-
-- Quaternion algebra naturally supports **multi-component coupling**
-- Uses structured quaternion parameterization
-- Provides **structured inductive bias**
-
-> Q-Mixer is not a simple replacement of real-valued layers,  
-> but a **reformulation of EEG representation learning**.
-
----
-
-## 📊 Experimental Results
-
-### Datasets
-
-We evaluate on **6 public EEG datasets**:
-
-- Emotion: **SEED, SEED-IV, SEED-V**
-- Motor Imagery: **BNCI2014001, Blankertz2007, BNCI2014002**
-
-All experiments follow **LOSOCV (Leave-One-Subject-Out)**.
-
----
-
-### 🔥 Main Results
-
-- **Emotion recognition**:
-  - Q-Mixer achieves **best performance on all datasets**
-  - Consistent improvements in **Acc / F1 / AUC**
-
-- **Motor imagery**:
-  - Best on BNCI2014001 & Blankertz2007
-  - Second-best on BNCI2014002
-
----
-
-### 🧪 Key Observations
-
-- Robust across **different tasks**
-- Stable under **cross-subject distribution shifts**
-- Generalizes beyond a single EEG paradigm
-
----
-
-## ⚙️ Efficiency
-
-Parameter counts are reported from the instantiated networks, including all
-trainable biases and normalization parameters. Reproduce the per-layer report
-for all four entry points with:
+Count model and domain-discriminator parameters from the repository root:
 
 ```bash
 python tools/count_parameters.py
 ```
 
-The four public D=512 entry points are not the private JSED model. The
-manuscript's 22.6K JSED value is recorded separately in
-`JSED_PARAMETER_MANIFEST.json` with its scope and verification status. It must
-not be used as the parameter count of these public entry points. See
-`DATASET_AND_PREPROCESSING.md` for the acquisition and preprocessing disclosure.
+The manuscript's 22.6K parameter count refers to the separate JSED model, not
+these MI configurations.
 
----
-
-## 🔬 Ablation Insights
-
-We systematically validate the effectiveness of the proposed design:
-
-### 1️⃣ Fusion Strategy
-
-- Sum / Concat → weak
-- Linear → better
-- Interaction → improved but unstable
-- **Q-Mixer → consistently best**
-
-👉 Indicates:
-> performance gain comes from **structured quaternion fusion**, not architecture size
-
----
-
-### 2️⃣ Component Analysis
-
-Removing any component degrades performance:
-
-- w/o Interaction → largest drop
-- w/o Shared → unstable alignment
-- w/o Spatial / Temporal → incomplete representation
-
-👉 Confirms:
-> all four components are **functionally necessary**
-
----
-
-### 3️⃣ Gating Mechanism
-
-- Improves only when fusion quality is high
-- Limited or negative effect on naive fusion
-
-👉 Indicates:
-> gating works **only with structured representation**
-
----
-
-## 📌 Key Contributions
-
-- ✅ Propose a **quaternion spatiotemporal mixer** for EEG decoding  
-- ✅ Introduce **explicit structured coupling** instead of implicit learning  
-- ✅ Achieve **robust cross-subject generalization** across 6 datasets  
-- ✅ Publish exact public model configurations and auditable parameter accounting
-
----
-
-## 📖 Conclusion
-
-Q-Mixer demonstrates that:
-
-> **Explicit structured modeling in hypercomplex space is a viable and efficient paradigm for EEG decoding**
-
-This provides a new direction for:
-
-- EEG representation learning
-- Low-parameter neural modeling
-- Cross-subject generalization
-
----
-
-## 📂 Code
+## Tests
 
 ```bash
-git clone https://github.com/liuyici/Q-Mixer.git
+python -m pip install pytest
+python -m pytest tests -q
+```
+
+## Acknowledgments
+
+The quaternion layers are based on Titouan Parcollet's `pytorch-qnn`.
+The covariance-alignment utility retains its original MEKT attribution.

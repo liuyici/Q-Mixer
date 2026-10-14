@@ -17,11 +17,7 @@ from torch.autograd import Variable
 
 
 def init_weights(model: nn.Module):
-    """
-    Network Parameters Initialization Function
-    :param model: the model to initialize
-    :return: None
-    """
+    """Initialize normalization, linear, and convolutional layers."""
     classname = model.__class__.__name__
     if classname.find('BatchNorm') != -1:
         nn.init.normal_(model.weight, 1.0, 0.02)
@@ -46,25 +42,22 @@ def Entropylogits(input, redu='mean'):
 
 
 def nce_loss(features, labels, temperature=0.07):
-    # features: [N, d] 已经归一化
-    # labels: [N] 类别标签
     features = F.normalize(features, dim=1)
-    sim_matrix = torch.matmul(features, features.T) / temperature  # [N, N]
+    sim_matrix = torch.matmul(features, features.T) / temperature
 
     labels = labels.contiguous().view(-1, 1)
-    mask = torch.eq(labels, labels.T).float().cuda()  # 同类 = 1，不同类 = 0
+    mask = torch.eq(labels, labels.T).float().cuda()
 
-    # 去掉自身对比
     logits_mask = torch.ones_like(mask) - torch.eye(mask.shape[0]).cuda()
     mask = mask * logits_mask
 
     exp_sim = torch.exp(sim_matrix) * logits_mask
     log_prob = sim_matrix - torch.log(exp_sim.sum(1, keepdim=True) + 1e-9)
 
-    # 只计算正样本
     mean_log_prob_pos = (mask * log_prob).sum(1) / (mask.sum(1) + 1e-9)
     loss = -mean_log_prob_pos.mean()
     return loss
+
 
 def Entropy(input_):
     epsilon = 1e-5
@@ -72,12 +65,13 @@ def Entropy(input_):
     entropy = torch.sum(entropy, dim=1)
     return entropy
 
-def loss_adv(features, ad_net, logits=None):
 
+def loss_adv(features, ad_net, logits=None):
     ad_out = ad_net(features, logits)
     batch_size = ad_out.size(0) // 2
     dc_target = torch.from_numpy(np.array([[1]] * batch_size + [[0]] * batch_size)).float().cuda()
     return nn.BCELoss()(ad_out, dc_target)
+
 
 def cosine_matrix(x,y):
     x=F.normalize(x,dim=1)
@@ -85,8 +79,8 @@ def cosine_matrix(x,y):
     xty=torch.sum(x.unsqueeze(1)*y.unsqueeze(0),2)
     return 1-xty
 
+
 def SM(Xs, Xt, Ys, Yt, Cs_memory, Ct_memory, Wt=None, decay=0.3):
-    # Clone memory
     Cs = Cs_memory.clone()
     Ct = Ct_memory.clone()
 
@@ -95,7 +89,7 @@ def SM(Xs, Xt, Ys, Yt, Cs_memory, Ct_memory, Wt=None, decay=0.3):
     Cs = r*Cs / (torch.norm(Cs, dim=1, keepdim=True)+1e-10)
 
     K = Cs.size(0)
-    # for each class
+
     for k in range(K):
         Xs_k = Xs[Ys==k]
         Xt_k = Xt[Yt==k]
@@ -121,6 +115,7 @@ def SM(Xs, Xt, Ys, Yt, Cs_memory, Ct_memory, Wt=None, decay=0.3):
 
     return torch.sum(torch.diag(Dist)), Cs, Ct
 
+
 def robust_pseudo_loss(output,label,weight,q=1.0):
     weight[weight<0.5] = 0.0
     one_hot_label=torch.zeros(output.size()).scatter_(1,label.cpu().view(-1,1),1).cuda()
@@ -128,6 +123,7 @@ def robust_pseudo_loss(output,label,weight,q=1.0):
     output=F.softmax(output,dim=1)
     mae=(1.0-torch.masked_select(output,mask)**q)/q
     return torch.sum(weight*mae)/(torch.sum(weight)+1e-10)
+
 
 class ConditionalEntropyLoss(torch.nn.Module):
     def __init__(self):
@@ -137,33 +133,24 @@ class ConditionalEntropyLoss(torch.nn.Module):
         b = F.softmax(x, dim=1) * F.log_softmax(x, dim=1)
         b = b.sum(dim=1)
         return -1.0 * b.mean(dim=0)
-    
-    
+
+
 def seed(seed: Optional[int] = 0):
-    """
-    fix all the random seed
-    :param seed: random seed
-    :return: None
-    """
+    """Seed Python, NumPy, and PyTorch."""
     os.environ['PYTHONHASHSEED'] = str(seed)
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     torch.backends.cudnn.deterministic = True
-    
+
+
 def temperature_normalization(x: torch.Tensor,
                               t: Optional[float] = 0.1) -> torch.Tensor:
-    """
-    L2 Normalization for bottleneck module output with temperature factor
-    :param x: feature tensor
-    :param t: temperature factor
-    :return: t-normalized feature
-    """
+    """L2-normalize features and scale by temperature."""
     n_feature = x.shape[1]
     norm = torch.norm(x, p=2, dim=1).view(-1, 1).repeat(1, n_feature)
     return x / (norm * t)
-
 
 
 def augment(data):
@@ -175,14 +162,12 @@ def augment(data):
     return Variable(torch.from_numpy(tan).type(torch.FloatTensor))
 
 
-
 def centroid_A(data):
     data_new = copy.deepcopy(data)
     ca = centroid_align(center_type='riemann', cov_type='lwf')
     Ca_noTral,new_data_x = ca.fit_transform(data_new)
     new_X = np.transpose(new_data_x, (0, 2, 1))
-    # tanTrans = TangentSpace().fit(Ca_noTral)
-    # tan = tanTrans.transform(Ca_noTral)
+
     return Variable(torch.from_numpy(new_X).type(torch.FloatTensor))
 
 
@@ -205,11 +190,13 @@ def guassian_kernel(source, target, kernel_mul=2.0, kernel_num=5, fix_sigma=None
                       for bandwidth_temp in bandwidth_list]
         return sum(kernel_val)
 
+
 def linear_mmd2( f_of_X, f_of_Y):
         loss = 0.0
         delta = f_of_X.float().mean(0) - f_of_Y.float().mean(0)
-        loss = delta.dot(delta.T)#求矩阵的内积：即将矩阵内的元素依次点乘，然后再将所有的点乘结果相加，得到一位数的结果
+        loss = delta.dot(delta.T)
         return loss
+
 
 def marginal(source, target, kernel_type='rbf', kernel_mul=2.0, kernel_num=5,fix_sigma = None):
         if kernel_type == 'linear':
@@ -225,17 +212,18 @@ def marginal(source, target, kernel_type='rbf', kernel_mul=2.0, kernel_num=5,fix
             loss = torch.mean(XX + YY - XY - YX)
             return loss
 
+
 def conditional(source, target, s_label, t_label, kernel_mul=2.0, kernel_num=5, fix_sigma=None):
         batch_size = source.size()[0]
         weight_ss, weight_tt, weight_st = Weight.cal_weight(
             s_label, t_label, type='visual')
-        weight_ss = torch.from_numpy(weight_ss).cuda()
-        weight_tt = torch.from_numpy(weight_tt).cuda()
-        weight_st = torch.from_numpy(weight_st).cuda()
+        weight_ss = torch.as_tensor(weight_ss, device=source.device, dtype=source.dtype)
+        weight_tt = torch.as_tensor(weight_tt, device=source.device, dtype=source.dtype)
+        weight_st = torch.as_tensor(weight_st, device=source.device, dtype=source.dtype)
 
         kernels = guassian_kernel(source, target,
                                 kernel_mul=kernel_mul, kernel_num=kernel_num, fix_sigma=fix_sigma)
-        loss = torch.Tensor([0]).cuda()
+        loss = source.new_zeros(1)
         if torch.sum(torch.isnan(sum(kernels))):
             return loss
         SS = kernels[:batch_size, :batch_size]
@@ -244,18 +232,14 @@ def conditional(source, target, s_label, t_label, kernel_mul=2.0, kernel_num=5, 
 
         loss += torch.sum(weight_ss * SS + weight_tt * TT - 2 * weight_st * ST)
         return loss
-    
-    
-# 损失函数
+
+
 def discrepancy(out1, out2):
     return torch.mean(torch.abs(F.softmax(out1, dim = 1)- F.softmax(out2,dim = 1)))
 
 
-
 class SKLDivLoss(nn.Module):
-    """
-    Symmetric KL Divergence Loss for BAIT
-    """
+    """Symmetric KL divergence for BAIT."""
 
     def __init__(self):
         super(SKLDivLoss, self).__init__()
@@ -269,16 +253,10 @@ class SKLDivLoss(nn.Module):
         out1_t = out1_t.detach()
         return (F.kl_div(out1.log(), out2_t, reduction='none') +
                 F.kl_div(out2.log(), out1_t, reduction='none')) / 2
-        
-class LabelSmooth(nn.Module):
-    """
-    Label smooth cross entropy loss
 
-    Parameters:
-        - **num_class** (int): num of classes
-        - **alpha** Optional(float): the smooth factor
-        - **device** Optional(str): the used device "cuda" or "cpu"
-    """
+
+class LabelSmooth(nn.Module):
+    """Cross-entropy with uniform label smoothing."""
 
     def __init__(self,
                  num_class: int,
@@ -294,57 +272,43 @@ class LabelSmooth(nn.Module):
                 inputs: torch.Tensor,
                 targets: torch.Tensor) -> torch.Tensor:
         log_probs = self.logsoftmax(inputs)
-        targets = torch.zeros(log_probs.size()).to(self.device).scatter_(1, targets.unsqueeze(1), 1)
+        targets = torch.zeros_like(log_probs).scatter_(1, targets.unsqueeze(1), 1)
         targets = (1 - self.alpha) * targets + self.alpha / self.num_class
         loss = (-targets * log_probs).sum(dim=1)
         return loss.mean()
 
 
 def BNM(src, tar):
-    """ Batch nuclear-norm maximization, CVPR 2020.
-    tar: a tensor, softmax target output.
-    NOTE: this does not require source domain data.
-    """
+    """Batch nuclear-norm maximization on target predictions (CVPR 2020)."""
     _, out, _ = torch.svd(tar)
     loss = -torch.mean(out)
     return loss
 
+
 def CORAL_loss(source, target):
     d = source.data.shape[1]
     ns, nt = source.data.shape[0], target.data.shape[0]
-    # source covariance
+
     xm = torch.mean(source, 0, keepdim=True) - source
     xc = xm.t() @ xm / (ns - 1)
 
-    # target covariance
     xmt = torch.mean(target, 0, keepdim=True) - target
     xct = xmt.t() @ xmt / (nt - 1)
 
-    # frobenius norm between source and target
     loss = torch.mul((xc - xct), (xc - xct))
     loss = torch.sum(loss) / (4*d*d)
     return loss
 
 
-
 def Entropy(input: torch.Tensor) -> torch.Tensor:
-    """
-    Compute the entropy
-    :param input: the softmax output
-    :return: entropy
-    """
+    """Entropy of each probability vector."""
     entropy = -input * torch.log(input + 1e-5)
     entropy = torch.sum(entropy, dim=1)
     return entropy
 
-class TEntropyLoss(nn.Module):
-    """
-    The Tsallis Entropy for Uncertainty Reduction
 
-    Parameters:
-        - **t** Optional(float): the temperature factor used in TEntropyLoss
-        - **order** Optional(float): the order of loss function
-    """
+class TEntropyLoss(nn.Module):
+    """Tsallis entropy with temperature scaling."""
 
     def __init__(self,
                  t: Optional[float] = 2.0,
@@ -362,7 +326,7 @@ class TEntropyLoss(nn.Module):
         entropy_weight = (n_sample * entropy_weight / torch.sum(entropy_weight)).unsqueeze(dim=1)
         entropy_weight = entropy_weight.repeat(1, n_class)
         tentropy = torch.pow(softmax_out, self.order) * entropy_weight
-        # weight_softmax_out=softmax_out*entropy_weight
+
         tentropy = tentropy.sum(dim=0) / softmax_out.sum(dim=0)
         loss = -torch.sum(tentropy) / (n_class * (self.order - 1.0))
         return loss
