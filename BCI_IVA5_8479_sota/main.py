@@ -1,44 +1,22 @@
-"""
-
-"""
-
-from einops import rearrange
+"""Q-Mixer LOSO training on BCI Competition III IVa features."""
 
 import argparse
-import os
-os.environ["CUDA_VISIBLE_DEVICES"] = "0"  # 使用第2号物理GPU
-import numpy as np
-import math
 import random
-import datetime
-import time
-import scipy.io
-from modules import load_mi1, load_seed, fine_tuning_load_XY_MI
-from dataloader import *
-from model.snn_layers import first_order_low_pass_layer, neuron_layer
 
+import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch
+from sklearn.metrics import confusion_matrix, f1_score, roc_auc_score
 from torch.nn import Parameter
-# import lr_schedule
-from   torch                            import autograd
-from   torch.autograd                   import Variable
-from   core_qnn.quaternion_layers       import *
-import torchvision.transforms as transforms
-import utils
-from utils import LabelSmooth
-import Adver_network
-from torch import Tensor
-from einops import rearrange, reduce, repeat
-from einops.layers.torch import Rearrange, Reduce
-from sklearn.metrics import confusion_matrix
-from sklearn.metrics import roc_auc_score
-from sklearn.metrics import f1_score
 
-# ============================================================
-# Utils
-# ============================================================
+import Adver_network
+import utils
+from core_qnn.quaternion_layers import QuaternionLinear, QuaternionLinearAutograd
+from modules import fine_tuning_load_XY_MI, load_mi1
+from utils import LabelSmooth
+
+
 def GaussianNoise(x, sigma=1.0):
     if sigma <= 0:
         return x
@@ -75,6 +53,7 @@ class SLR_layer(nn.Module):
         output = cosine
         return output
 
+
 class QuaternionFusionHead(nn.Module):
     """Fuse channel and temporal features with a Hamilton-product interaction."""
     def __init__(self, d_model, dropout=0.1):
@@ -87,7 +66,6 @@ class QuaternionFusionHead(nn.Module):
         self.norm_c = nn.LayerNorm(d_model)
         self.norm_t = nn.LayerNorm(d_model)
 
-       
         self.temporal_proj = QuaternionLinear(d_model, self.q_dim)
         self.shared_proj = QuaternionLinear(d_model, self.q_dim)
         self.interaction_proj = QuaternionLinear(d_model, self.q_dim)
@@ -110,7 +88,6 @@ class QuaternionFusionHead(nn.Module):
             nn.Dropout(dropout)
         )
 
-       
         self.gate = nn.Sequential(
             nn.Linear(d_model * 2, d_model),
             nn.GELU(),
@@ -120,17 +97,18 @@ class QuaternionFusionHead(nn.Module):
 
     def forward(self, channel, temporal):
         B, T, D = channel.shape
-        c = self.norm_c(channel)   # [B,T,D]
-        t = self.norm_t(temporal)  # [B,T,D]
-        temporal = self.temporal_proj(t)             # q_1: temporal
-        shared = self.shared_proj(0.5 * (c + t))     # q_2: shared
-        interaction = self.interaction_proj(hamilton_product(c, t))  # q_3: interaction
-        spatial = self.spatial_proj(c)               # q_4: spatial
+        c = self.norm_c(channel)
+        t = self.norm_t(temporal)
+        temporal = self.temporal_proj(t)
+        shared = self.shared_proj(0.5 * (c + t))
+        interaction = self.interaction_proj(hamilton_product(c, t))
+        spatial = self.spatial_proj(c)
+        # QMB component order: temporal, shared, interaction, spatial.
         q = torch.stack([temporal, shared, interaction, spatial], dim=-1)
         q_rot = self.rot(q.reshape(-1, 4)).view(B, T, self.q_dim, 4)
         fused = q_rot.reshape(B, T, self.d_model)
         fused = self.out_proj(fused)
-        gate = self.gate(torch.cat([c, t], dim=-1))   # [B,T,d_model]
+        gate = self.gate(torch.cat([c, t], dim=-1))
         fused = gate * fused
         return fused
 
@@ -160,17 +138,17 @@ class QuaternionGatedEEGBlockV3(nn.Module):
         self.out_proj = nn.Linear(self.D_q, self.D_in)
 
     def forward(self, x):
-        B, T, D = x.shape #[B,15,310] [B,750,22]
+        B, T, D = x.shape
         assert T == self.T and D == self.D_in
 
         x0 = x
-        z = self.drop(self.in_proj(self.norm(x)))      # [B,750,24]
+        z = self.drop(self.in_proj(self.norm(x)))
 
-        x_time = self.time_proj(z.transpose(1, 2)).transpose(1, 2)   #  [B,750,24]
-        x_channel = self.channel_proj(z)                             # [B,750,24]
+        x_time = self.time_proj(z.transpose(1, 2)).transpose(1, 2)
+        x_channel = self.channel_proj(z)
 
-        fused = self.quat_fusion(x_channel, x_time)                   # [B,T,320]
-        y = self.out_proj(fused)                                      # [B,T,310]
+        fused = self.quat_fusion(x_channel, x_time)
+        y = self.out_proj(fused)
 
         return x0 + y
 
@@ -196,6 +174,7 @@ class TransformerEncoder(nn.Module):
         for blk in self.layers:
             x = blk(x)
         return x
+
 
 class DFN(nn.Sequential):
     def __init__(self, bottleneck_dim):
@@ -226,11 +205,11 @@ class ClassificationHead(nn.Sequential):
             nn.Dropout(0.3),
             SLR_layer(32, n_classes)
         )
-        
+
     def forward(self, x):
         x = x.contiguous().view(x.size(0), -1).float()
         out = self.fc2(x)
-        
+
         return x, out
 
 
@@ -247,8 +226,9 @@ class Discriminator(nn.Sequential):
     def forward(self, x):
         x = x.contiguous().view(x.size(0), -1).float()
         out = self.fc2(x)
-        
+
         return out
+
 
 class QuantGate(nn.Sequential):
     def __init__(self, emb_size=310, depth=6, bottleneck_dim=256, n_classes=4, **kwargs):
@@ -259,24 +239,25 @@ class QuantGate(nn.Sequential):
             drop_p=0.3,
             C=7021,
             Freq=1,
-            T=args.window_size  
+            T=args.window_size
         )
 
         self.dfn = DFN(bottleneck_dim)
         self.head = ClassificationHead(emb_size, bottleneck_dim, n_classes)
 
     def forward(self, x):
-        # x: [B, 5, 253]
         x = self.encoder(x)
         x = self.dfn(x)
         return self.head(x)
 
 
-
 class ExGAN():
     def __init__(self, args, nsub, fold):
         super(ExGAN, self).__init__()
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = getattr(args, "device", "auto")
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = torch.device(device)
         self.args = args
         self.batch_size = 300
         self.n_epochs = args.n_epochs
@@ -284,7 +265,7 @@ class ExGAN():
         self.lr2 = 0.0002
         self.b1 = 0.5
         self.b2 = 0.999
-        # Paper notation: L = L_cls + beta * L_adv + gamma * L_mmd.
+
         self.beta_adv = getattr(args, 'beta', 0.01)
         self.gamma_mmd = getattr(args, 'gamma', 0.5)
         self.radius = 10
@@ -292,11 +273,13 @@ class ExGAN():
         self.model = QuantGate(emb_size=7021, depth=6, bottleneck_dim=128, n_classes=2).float().to(self.device)
         self.domain_Discriminator = Discriminator(emb_size=7021, n_classes=4).to(self.device).float()
         self.criterion = LabelSmooth(num_class=args.num_class).to(self.device)
-        
-    def schedule_lambda(self, epoch, total_epochs, max_lambda=0.6, k=5):
-        p = epoch / total_epochs  # 归一化到 [0,1]
-        return max_lambda * (2. / (1. + np.exp(-k * p)) - 1)
+        self.criterion_domain = LabelSmooth(
+            num_class=self.domain_Discriminator.fc2[-1].out_features
+        ).to(self.device)
 
+    def schedule_lambda(self, epoch, total_epochs, max_lambda=0.6, k=5):
+        p = epoch / total_epochs
+        return max_lambda * (2. / (1. + np.exp(-k * p)) - 1)
 
     def get_source_data(self, feature="de_LDS"):
         if self.args.dataset == "seed":
@@ -309,7 +292,7 @@ class ExGAN():
         return dset_loaders
 
     def _compute_metrics(self, logits, labels):
-        """Compute final-report metrics without using them for model selection."""
+        """Return accuracy, weighted F1, AUC, and the confusion matrix."""
         logits = logits.detach().float().cpu()
         labels = torch.as_tensor(labels).view(-1).long().cpu()
         probabilities = torch.softmax(logits, dim=1).numpy()
@@ -341,7 +324,7 @@ class ExGAN():
         return metrics[:4]
 
     def evaluate_target(self, test_dataset):
-        """Evaluate once after training; target labels are never used for selection."""
+        """Evaluate the target subject at the end of pretraining."""
         logits, labels = [], []
         with torch.no_grad():
             self.model.eval()
@@ -358,52 +341,52 @@ class ExGAN():
         return x
 
     def train(self, fold):
-        
         train_dataset, test_dataset, X, Y = self.get_source_data(feature="de_LDS")
-    
+        source_count = train_dataset.num_domains_src
+
         self.optimizer = torch.optim.Adam(
             list(self.model.parameters()) + list(self.domain_Discriminator.parameters()),
             lr=self.lr,
             betas=(self.b1, self.b2),
             weight_decay=0.005
         )
-    
+
         epochs_acc = []
-    
+
         B = self.args.batch_size
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    
+        device = self.device
+
         for e in range(self.n_epochs):
             self.model.train()
             self.domain_Discriminator.train()
-    
+
             for i, data in enumerate(train_dataset):
-                x_src = [data[f"Sx{idx}"] for idx in range(1, 5)]  # 14 个域
-                y_src = [data[f"Sy{idx}"] for idx in range(1, 5)]
+                x_src = [data[f"Sx{idx}"] for idx in range(1, source_count + 1)]
+                y_src = [data[f"Sy{idx}"] for idx in range(1, source_count + 1)]
                 img = torch.cat(x_src, dim=0).to(device, non_blocking=True).float()
                 label = torch.cat(y_src, dim=0).to(device, non_blocking=True).long()
-    
+
                 x_trg = data["Tx"].to(device, non_blocking=True).float()
                 img = img.view(img.size(0), img.size(1), -1)
                 x_trg = x_trg.view(x_trg.size(0), x_trg.size(1), -1)
-                domain_label = torch.arange(4, device=device, dtype=torch.long).repeat_interleave(B)
-                tok, outputs = self.model(img)            # tok: [14B, feat], outputs: [14B, C]
-                tok_target, outputs_target = self.model(x_trg)  # [B, feat], [B, C]
-                pre_target = torch.softmax(outputs_target, dim=1)  # [B, C]
-                tok_s = tok.view(4, B, -1)      # [14, B, feat]
-                lab_s = label.view(4, B)        # [14, B]
-                tgt_tok_eq = tok_target          # [B, feat]
-                # The paper uses hard pseudo-labels for class-conditional MMD.
-                # One-hot encoding keeps Weight.cal_weight's expected shape.
+                domain_label = torch.arange(source_count, device=device, dtype=torch.long).repeat_interleave(B)
+                tok, outputs = self.model(img)
+                tok_target, outputs_target = self.model(x_trg)
+                pre_target = torch.softmax(outputs_target, dim=1)
+                tok_s = tok.view(source_count, B, -1)
+                lab_s = label.view(source_count, B)
+                tgt_tok_eq = tok_target
+
+                # Class-conditional MMD uses hard pseudo-labels.
                 tgt_prob_eq = F.one_hot(
                     pre_target.argmax(dim=1), num_classes=self.args.num_class
-                ).float()                       # [B, C]
-    
+                ).float()
+
                 mmd_b_vals, mmd_t_vals = [], []
-                for d in range(4):
-                    src_tok_d = tok_s[d]                 # [B, feat]
-                    src_lab_d = lab_s[d].reshape(B, 1)   # [B, 1]
-    
+                for d in range(source_count):
+                    src_tok_d = tok_s[d]
+                    src_lab_d = lab_s[d].reshape(B, 1)
+
                     mb = utils.marginal(src_tok_d, tgt_tok_eq)
                     mt = utils.conditional(
                         src_tok_d,
@@ -421,12 +404,12 @@ class ExGAN():
                 mmd_b_loss = torch.stack(mmd_b_vals).mean()
                 mmd_t_loss = torch.stack(mmd_t_vals).mean()
                 MMD_loss = mmd_b_loss + mmd_t_loss
-    
+
                 lambda_adv = self.schedule_lambda(e, self.n_epochs)
                 features_s_Adver = Adver_network.ReverseLayerF.apply(tok, lambda_adv)
 
                 outputs_D = self.domain_Discriminator(features_s_Adver.float())
-                Adver_domain_labels_loss = self.criterion(outputs_D, domain_label)
+                Adver_domain_labels_loss = self.criterion_domain(outputs_D, domain_label)
                 slc_loss = self.criterion(outputs, label)
                 loss = (slc_loss + self.beta_adv * Adver_domain_labels_loss
                         + self.gamma_mmd * MMD_loss)
@@ -445,63 +428,61 @@ class ExGAN():
                   '  lambda_adv: %.4f' % lambda_adv,
                   '  Source train acc: %.4f' % train_acc)
 
-        # The target labels are read only once for the final, held-out report.
         final_acc, _, _, _, y_true, y_pred = self.evaluate_target(test_dataset)
         Y_true = torch.as_tensor(y_true)
         Y_pred = torch.as_tensor(y_pred)
         print('Fixed pre-training epochs:', self.n_epochs)
         print('Final target accuracy:', final_acc)
-     
-        return final_acc, final_acc, Y_true, Y_pred, X, Y, self.model, epochs_acc
 
+        return final_acc, final_acc, Y_true, Y_pred, X, Y, self.model, epochs_acc
 
     def fine_tuning(self, args, X, Y, model):
         dset_loaders = self.get_source_data_for_fine(X, Y)
         parameter_model = model.parameters()
         self.optimizer = torch.optim.Adam(parameter_model, lr=self.lr2, betas=(self.b1, self.b2))
-    
+
         len_train_source = len(dset_loaders["source"])
         len_train_target = len(dset_loaders["target"])
         final_acc = 0
         final_f1 = 0
         final_auc = 0
         final_mat = []
-    
+
         iter_acc_list = []
         iter_f1_list = []
         iter_auc_list = []
-    
+
         for i in range(args.max_iter2):
             model.train()
             if i % len_train_source == 0:
                 iter_source = iter(dset_loaders["source"])
             if i % len_train_target == 0:
                 iter_target = iter(dset_loaders["target"])
-    
+
             inputs_source_, labels_source = next(iter_source)
-            inputs_target_ = next(iter_target)
-    
+            inputs_target_, = next(iter_target)
+
             inputs_source_ = inputs_source_.type(torch.FloatTensor)
             labels_source = labels_source.type(torch.LongTensor)
             inputs_target_ = inputs_target_.type(torch.FloatTensor)
-    
+
             inputs_source, labels_source = inputs_source_.to(self.device), labels_source.to(self.device)
             inputs_target = inputs_target_.to(self.device)
-    
+
             inputs_source = inputs_source.view(inputs_source.size(0), inputs_source.size(1), -1)
             inputs_target = inputs_target.view(inputs_target.size(0), inputs_target.size(1), -1)
-    
+
             features_source, outputs_source = model(inputs_source)
+            # Update batch-normalization statistics with unlabeled target data.
             model(inputs_target)
-    
+
             classifier_loss = self.criterion_cls(outputs_source, labels_source.flatten())
-            total_loss = classifier_loss   # + 2 * CORAL
-    
+            total_loss = classifier_loss
+
             self.optimizer.zero_grad()
             total_loss.backward()
             self.optimizer.step()
 
-        # Select no checkpoint using target labels; report only the fixed final iteration.
         final_acc, final_f1, final_auc, final_mat = self.test_suda(dset_loaders, model)
         iter_acc_list.append(final_acc)
         iter_f1_list.append(final_f1)
@@ -510,6 +491,7 @@ class ExGAN():
             args.max_iter2, final_acc, final_f1, final_auc
         ))
         return final_acc, final_f1, final_auc, final_mat, model, iter_acc_list, iter_f1_list, iter_auc_list
+
 
 def main(args):
     subject_count = 5
@@ -526,9 +508,9 @@ def main(args):
                 torch.manual_seed(seed_n)
                 if torch.cuda.is_available():
                     torch.cuda.manual_seed_all(seed_n)
-                print('Subject %d (seed %d)' % (i + 1, seed_n))
-                result_write.write('Subject %d, seed %d\n' % (i + 1, seed_n))
-                exgan = ExGAN(args, i + 1, 1)
+                print('Subject %d (seed %d)' % (args.target, seed_n))
+                result_write.write('Subject %d, seed %d\n' % (args.target, seed_n))
+                exgan = ExGAN(args, args.target, 1)
                 ba, _, _, _, X, Y, model, epochs_acc = exgan.train(1)
                 total_acc.append(epochs_acc)
                 final_acc, final_f1, final_auc, _, model, iter_acc, iter_f1, iter_auc = exgan.fine_tuning(args, X, Y, model)
@@ -560,11 +542,9 @@ def main(args):
         result_write.write('Mean final target AUC: %.6f\n' % mean_ft_auc)
 
 
-
-
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Spherical Space Domain Adaptation with Pseudo-label Loss')
-    parser.add_argument('--device', type=str, default='cuda')
+    parser = argparse.ArgumentParser(description='Q-Mixer leave-one-subject-out EEG training')
+    parser.add_argument('--device', type=str, default='auto', help='auto, cpu, cuda, or cuda:N')
     parser.add_argument('--dataset',type=str,default='seed')
     parser.add_argument('--source', type=str, default='amazon')
     parser.add_argument('--target', type=int, default=1)
@@ -582,15 +562,15 @@ if __name__ == "__main__":
     parser.add_argument('--max_iter2', type=int, default=102)
     parser.add_argument('--batch_size',type=int,default=50)
     parser.add_argument('--batch_size_fine',type=int,default=32)
-    parser.add_argument('--seed', type=int, default=1, help="first of five random seeds")
+    parser.add_argument('--seed', type=int, default=1, help="first random seed")
     parser.add_argument('--num_seeds', type=int, default=5, help="number of independent random seeds")
     parser.add_argument('--hidden_size', type=int, default=512, help="Bottleneck (features) dimensionality")
     parser.add_argument('--bottleneck_dim', type=int, default=256, help="Bottleneck (features) dimensionality")
-    parser.add_argument('--session', type=int, default=1, help="random seed number ")
+    parser.add_argument('--session', type=int, default=1, help="session identifier for SEED loaders")
     parser.add_argument('--n_epochs', type=int, default=100, help="fixed pre-training epochs")
     parser.add_argument('--beta', type=float, default=0.01, help="adversarial loss weight")
     parser.add_argument('--gamma', type=float, default=0.5, help="MMD loss weight")
-    parser.add_argument('--file_path', type=str, default=r"E:\Research\EEGDataSet\BNCI20140mi5\Rawdata\saved_loso_W1_logmap_gfk", help="Path from the current dataset")
+    parser.add_argument('--file_path', type=str, default=r"E:\Research\EEGDataSet\BNCI20140mi5\Rawdata\saved_loso_W1_logmap_gfk", help="directory containing LOSO feature files")
     parser.add_argument('--log_file')
     parser.add_argument('--n_classes', type=int, default=2)
     parser.add_argument('--d_classes', type=int, default=6)
@@ -600,14 +580,14 @@ if __name__ == "__main__":
     parser.add_argument('--train_bias', type=int, default=True)
     parser.add_argument('--membrane_filter', type=int, default=False)
     parser.add_argument('--length', type=int, default=25)
-    #####
+
     parser.add_argument('--ila_switch_iter', type=int, default=1, help="number of iterations when only DA loss works and sim doesn't")
     parser.add_argument('--n_samples', type=int, default=2, help='number of samples from each src class')
-    parser.add_argument('--mu', type=int, default=80, help="these many target samples are used finally, eg. 2/3 of batch")  # mu in number
+    parser.add_argument('--mu', type=int, default=80, help="these many target samples are used finally, eg. 2/3 of batch")
     parser.add_argument('--k', type=int, default=3, help="k")
     parser.add_argument('--msc_coeff', type=float, default=1.0, help="coeff for similarity loss")
     parser.add_argument('--seq_len', type=int, default=12, help='Temporal length')
-    parser.add_argument('--enc_in', type=int, default=310, help='Input feature dim = 62*5')    
+    parser.add_argument('--enc_in', type=int, default=310, help='Input feature dim = 62*5')
     parser.add_argument('--d_model', type=int, default=64, help='Embedding dimension')
     parser.add_argument('--d_ff', type=int, default=128, help='FFN hidden dimension')
     parser.add_argument('--n_heads', type=int, default=4, help='Number of attention heads')

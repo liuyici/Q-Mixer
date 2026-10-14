@@ -1,10 +1,7 @@
 #!/usr/bin/env python3
-"""Print reproducible per-layer trainable parameter counts for every entry point.
+"""Report registered and trainable parameter counts for each entry point.
 
-The report counts every parameter owned by QuantGate and its domain discriminator,
-including biases and normalization affine parameters. It prints registered and
-trainable totals, and does not estimate a count from paper notation or omit the
-discriminator.
+Includes QuantGate, its domain discriminator, biases, and normalization parameters.
 """
 
 from __future__ import annotations
@@ -48,14 +45,14 @@ def load_entry_point(name):
     if spec is None or spec.loader is None:
         raise ImportError(f"Cannot load {entry_dir / 'main.py'}")
     module = importlib.util.module_from_spec(spec)
-    # QuantGate reads this legacy module-global during construction.
+    # QuantGate reads args.window_size during construction.
     module.args = argparse.Namespace(window_size=CONFIGS[name]["window_size"])
     spec.loader.exec_module(module)
     return module
 
 
 def direct_parameter_rows(model):
-    """Return parameter counts owned directly by each module (no double count)."""
+    """Count trainable parameters owned directly by each module."""
     rows = []
     for name, submodule in model.named_modules():
         count = sum(

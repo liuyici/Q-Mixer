@@ -8,7 +8,6 @@ class Weight:
     @staticmethod
     def cal_weight(s_label, t_label, type='visual', batch_size=50, class_num=2):
         batch_size = s_label.size()[0]
-        # s_new_label = torch.tensor(s_label, dtype=torch.int64)
         s_sca_label = s_label.cpu().data.numpy()
         s_sca_label = [x for sublist in s_sca_label for x in sublist]
         s_vec_label = convert_to_onehot(s_sca_label)
@@ -17,7 +16,6 @@ class Weight:
         s_vec_label = s_vec_label / s_sum
 
         t_sca_label = t_label.cpu().data.max(1)[1].numpy()
-        #t_vec_label = convert_to_onehot(t_sca_label)
 
         t_vec_label = t_label.cpu().data.numpy()
         t_sum = np.sum(t_vec_label, axis=0).reshape(1, class_num)
@@ -36,14 +34,14 @@ class Weight:
                 s_tvec = s_vec_label[:, i].reshape(batch_size, -1)
                 t_tvec = t_vec_label[:, i].reshape(batch_size, -1)
                 ss = np.dot(s_tvec, s_tvec.T)
-                weight_ss = weight_ss + ss# / np.sum(s_tvec) / np.sum(s_tvec)
+                weight_ss = weight_ss + ss
                 tt = np.dot(t_tvec, t_tvec.T)
-                weight_tt = weight_tt + tt# / np.sum(t_tvec) / np.sum(t_tvec)
+                weight_tt = weight_tt + tt
                 st = np.dot(s_tvec, t_tvec.T)
-                weight_st = weight_st + st# / np.sum(s_tvec) / np.sum(t_tvec)
+                weight_st = weight_st + st
                 count += 1
 
-        length = count  # len( set_s ) * len( set_t )
+        length = count
         if length != 0:
             weight_ss = weight_ss / length
             weight_tt = weight_tt / length

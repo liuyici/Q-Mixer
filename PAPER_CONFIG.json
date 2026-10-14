@@ -3,44 +3,141 @@
     "target_labels_used_for_selection": false,
     "pretraining_epochs": "fixed by --n_epochs",
     "fine_tuning_iterations": "fixed by --max_iter2",
-    "final_target_evaluation": "one held-out evaluation after optimization"
+    "final_target_evaluation": "after each fixed training stage; no target-based selection"
   },
   "model": {
-    "quaternion_component_order": ["temporal", "shared", "interaction", "spatial"],
+    "quaternion_component_order": [
+      "temporal",
+      "shared",
+      "interaction",
+      "spatial"
+    ],
     "D": 512,
     "layer_norm": true,
     "independent_quaternion_projections": true,
     "residual_block": true,
     "interaction_operator": "Hamilton product",
-    "interaction_inputs": "LayerNorm(channel) and LayerNorm(temporal)"
+    "interaction_inputs": "LayerNorm(channel) and LayerNorm(temporal)",
+    "branch_layer": "real-valued linear",
+    "quaternion_activation": null,
+    "rotation_scalar_preserved": true,
+    "classifier": "DFN MLP followed by Linear, ELU, Dropout, and normalized-weight SLR_layer"
   },
   "parameter_accounting": {
     "script": "tools/count_parameters.py",
-    "scope": "all trainable QuantGate and domain-discriminator parameters, including biases and normalization affine parameters",
-    "unit": "scalar trainable parameters",
-    "reported_22_6K_parameters": 22600,
-    "reported_22_6K_scope": "private JSED Q-Mixer trainable model only",
-    "reported_22_6K_status": "author-reported for the private JSED implementation only; it is not the parameter count of any D=512 entry point",
-    "jsed_manifest": "JSED_PARAMETER_MANIFEST.json",
-    "jsed_independent_verification": "blocked until the private model is shared with reviewers or its complete layer manifest and checkpoint hash are released"
+    "scope": "QuantGate and domain discriminator, counted separately and combined",
+    "unit": "trainable scalar parameters, including biases and normalization",
+    "jsed_manifest": "JSED_PARAMETER_MANIFEST.json"
   },
   "optimization": {
     "optimizer": "Adam",
-    "betas": [0.5, 0.999],
+    "betas": [
+      0.5,
+      0.999
+    ],
     "loss": "L = L_cls + beta * L_adv + gamma * L_mmd",
     "beta_adversarial": 0.01,
     "gamma_mmd": 0.5,
     "target_pseudo_labels": "hard argmax one-hot for class-conditional MMD",
-    "seeds": [1, 2, 3, 4, 5]
+    "seeds": [
+      1,
+      2,
+      3,
+      4,
+      5
+    ],
+    "pretraining_lr": 0.002,
+    "fine_tuning_lr": 0.0002,
+    "pretraining_weight_decay": 0.005,
+    "classification_label_smoothing": 0.1,
+    "fine_tuning_loss": "source cross-entropy; target forward updates batch-normalization statistics"
   },
   "metrics": {
     "f1_average": "weighted",
-    "auc": "one-vs-rest from softmax probabilities; binary uses positive-class probability"
+    "auc": "one-vs-rest from softmax probabilities; binary uses positive-class probability",
+    "aggregation": "mean over all subject-seed pairs"
   },
   "entry_points": {
-    "BCI_14_7513_sota/main.py": {"n_epochs": 100, "max_iter2": 33, "subjects": 14, "emb_size": 120, "depth": 6, "window_size": 5, "n_classes": 2, "domain_classes": 13, "parameter_totals": {"QuantGate": 9501982, "Discriminator": 4557, "combined": 9506539}},
-    "BCI_2a9_7922_sota/main.py": {"n_epochs": 100, "max_iter2": 20, "subjects": 9, "emb_size": 253, "depth": 2, "window_size": 5, "n_classes": 2, "domain_classes": 8, "parameter_totals": {"QuantGate": 4006740, "Discriminator": 2344, "combined": 4009084}},
-    "BCI_IVA5_8479_sota/main.py": {"n_epochs": 100, "max_iter2": 102, "subjects": 5, "emb_size": 7021, "depth": 6, "window_size": 1, "n_classes": 2, "domain_classes": 4, "parameter_totals": {"QuantGate": 55313328, "Discriminator": 4260, "combined": 55317588}},
-    "BCI_IVNO7_8293_sota/main.py": {"n_epochs": 15, "max_iter2": 55, "subjects": 7, "emb_size": 1770, "depth": 6, "window_size": 1, "n_classes": 2, "domain_classes": 6, "parameter_totals": {"QuantGate": 20268154, "Discriminator": 4326, "combined": 20272480}}
-  }
+    "BCI_14_7513_sota/main.py": {
+      "n_epochs": 100,
+      "max_iter2": 33,
+      "subjects": 14,
+      "emb_size": 120,
+      "depth": 6,
+      "window_size": 5,
+      "n_classes": 2,
+      "domain_classes": 13,
+      "parameter_totals": {
+        "QuantGate": 9501982,
+        "Discriminator": 4557,
+        "combined": 9506539
+      },
+      "dataset": "BNCI2014002",
+      "batch_size": 50,
+      "batch_size_fine": 32,
+      "mmd_marginal_weight": 0.5,
+      "mmd_conditional_weight": 0.5
+    },
+    "BCI_2a9_7922_sota/main.py": {
+      "n_epochs": 100,
+      "max_iter2": 20,
+      "subjects": 9,
+      "emb_size": 253,
+      "depth": 2,
+      "window_size": 5,
+      "n_classes": 2,
+      "domain_classes": 8,
+      "parameter_totals": {
+        "QuantGate": 4006740,
+        "Discriminator": 2344,
+        "combined": 4009084
+      },
+      "dataset": "BNCI2014001",
+      "batch_size": 50,
+      "batch_size_fine": 144,
+      "mmd_marginal_weight": 1.0,
+      "mmd_conditional_weight": 1.0
+    },
+    "BCI_IVA5_8479_sota/main.py": {
+      "n_epochs": 100,
+      "max_iter2": 102,
+      "subjects": 5,
+      "emb_size": 7021,
+      "depth": 6,
+      "window_size": 1,
+      "n_classes": 2,
+      "domain_classes": 4,
+      "parameter_totals": {
+        "QuantGate": 55313328,
+        "Discriminator": 4260,
+        "combined": 55317588
+      },
+      "dataset": "MI5 (additional experiment)",
+      "batch_size": 50,
+      "batch_size_fine": 32,
+      "mmd_marginal_weight": 1.0,
+      "mmd_conditional_weight": 1.0
+    },
+    "BCI_IVNO7_8293_sota/main.py": {
+      "n_epochs": 15,
+      "max_iter2": 55,
+      "subjects": 7,
+      "emb_size": 1770,
+      "depth": 6,
+      "window_size": 1,
+      "n_classes": 2,
+      "domain_classes": 6,
+      "parameter_totals": {
+        "QuantGate": 20268154,
+        "Discriminator": 4326,
+        "combined": 20272480
+      },
+      "dataset": "Blankertz2007",
+      "batch_size": 50,
+      "batch_size_fine": 32,
+      "mmd_marginal_weight": 1.0,
+      "mmd_conditional_weight": 1.0
+    }
+  },
+  "scope": "Public MI entry-point defaults; manuscript differences are listed in REPRODUCIBILITY.md"
 }

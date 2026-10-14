@@ -30,7 +30,6 @@ def one_hot(y, n_cls):
         y_new.append(target)
     return np.array(y_new, 'int32')
 
-# Obtaining TRAIN and TEST from DATA
 def split_data(X, Y, seed, test_size=0.3):
 
     s = StratifiedShuffleSplit(n_splits=1, test_size=test_size, random_state=seed)
@@ -41,38 +40,32 @@ def split_data(X, Y, seed, test_size=0.3):
     return X_tr, Y_tr, X_ts, Y_ts
 
 
-
-# dataset definition
 class PseudoLabeledData(Dataset):
-    # load the dataset
     def __init__(self, X, Y, W):
         self.X = torch.Tensor(X).float()
         self.Y = torch.Tensor(Y).long()
-        # weights
         self.W = torch.Tensor(W).float()
 
-    # number of rows in the dataset
     def __len__(self):
         return len(self.X)
 
-    # get a row at an index
     def __getitem__(self, idx):
         return [self.X[idx], self.Y[idx], self.W[idx]]
-    
+
 
 def load_seed(args, path, session="all", feature="LDS", n_samples=185):
     import scipy.io
     import numpy as np
 
-    session1 = ["1_20131027", "2_20140404", "3_20140603", "4_20140621", "5_20140411", 
-                "6_20130712", "7_20131027", "8_20140511", "9_20140620", "10_20131130", 
+    session1 = ["1_20131027", "2_20140404", "3_20140603", "4_20140621", "5_20140411",
+                "6_20130712", "7_20131027", "8_20140511", "9_20140620", "10_20131130",
                 "11_20140618", "12_20131127", "13_20140527", "14_20140601", "15_20130709"]
-    
-    session2 = ["1_20131030", "2_20140413", "3_20140611", "4_20140702", "5_20140418", 
-                "6_20131016", "7_20131030", "8_20140514", "9_20140627", "10_20131204",  
+
+    session2 = ["1_20131030", "2_20140413", "3_20140611", "4_20140702", "5_20140418",
+                "6_20131016", "7_20131030", "8_20140514", "9_20140627", "10_20131204",
                 "11_20140625", "12_20131201", "13_20140603", "14_20140615", "15_20131016"]
-    
-    session3 = ["1_20131107", "2_20140419", "3_20140629", "4_20140705", "5_20140506", 
+
+    session3 = ["1_20131107", "2_20140419", "3_20140629", "4_20140705", "5_20140506",
                 "6_20131113", "7_20131106", "8_20140521", "9_20140704", "10_20131211",
                 "11_20140630", "12_20131207", "13_20140610", "14_20140627", "15_20131105"]
 
@@ -85,55 +78,50 @@ def load_seed(args, path, session="all", feature="LDS", n_samples=185):
     else:
         raise ValueError("Session must be 1, 2, or 3")
 
-    # Load labels
     y_session = scipy.io.loadmat(path + "label.mat", mat_dtype=True)["label"][0]
-    y_session = y_session + 1  # To [1, 2, 3]
-    
+    y_session = y_session + 1  # Map -1, 0, 1 to 0, 1, 2.
+
     X_subjects = {}
     Y_subjects = {}
-    
+
     for subj_idx, subj in enumerate(x_session):
         print("Subject load:", subj)
         dataMat = scipy.io.loadmat(path + subj + ".mat", mat_dtype=True)
 
         subj_X_list = []
         subj_Y_list = []
-        
+
         for trial_idx in range(15):
-            features = dataMat[feature + str(trial_idx + 1)]  # shape: (T, 62, 5)
-            features = np.swapaxes(features, 0, 1)  # shape: (T, 62, 5)
+            features = dataMat[feature + str(trial_idx + 1)]
+            features = np.swapaxes(features, 0, 1)
 
             if features.shape[0] > n_samples:
-                features = features[-n_samples:]  # keep last n samples
+                features = features[-n_samples:]
 
-            # Sliding window
             window_size = 12
-            temp_feats = [np.expand_dims(features[i:i + window_size], axis=0) 
+            temp_feats = [np.expand_dims(features[i:i + window_size], axis=0)
                           for i in range(len(features) - window_size + 1)]
-            temp_feats = np.concatenate(temp_feats, axis=0)  # shape: (N, 12, 62, 5)
+            temp_feats = np.concatenate(temp_feats, axis=0)
 
             labels = np.array([y_session[trial_idx]] * temp_feats.shape[0])
             subj_X_list.append(temp_feats)
             subj_Y_list.append(labels)
-        
-        # Once per subject
+
         X_subjects[subj_idx] = np.concatenate(subj_X_list, axis=0)
         Y_subjects[subj_idx] = np.concatenate(subj_Y_list, axis=0)
         print(f"Subject {subj_idx+1}: {X_subjects[subj_idx].shape}, Labels: {Y_subjects[subj_idx].shape}")
-    
+
     trg_subj = args.target - 1
     Tx = X_subjects[trg_subj]
     Ty = Y_subjects[trg_subj]
     Tx, m, std = z_score(Tx)
 
-    # Train loader
     train_loader = UnalignedDataLoader()
     train_loader.initialize(len(x_session), X_subjects, Y_subjects, Tx, Ty, trg_subj,
                             args.batch_size, args.batch_size,
                             shuffle_testing=True, drop_last_testing=True)
     datasets = train_loader.load_data()
 
-    # Test loader
     test_loader = UnalignedDataLoaderTesting()
     test_loader.initialize(Tx, Ty, 200, shuffle_testing=False, drop_last_testing=False)
     dataset_test = test_loader.load_data()
@@ -141,24 +129,10 @@ def load_seed(args, path, session="all", feature="LDS", n_samples=185):
     return datasets, dataset_test, X_subjects, Y_subjects
 
 
-
-
 def load_seed_raw(args, path, session="all", feature="LDS", n_samples=185):
-    """
-    SEED I
-    A total number of 15 subjects participated the experiment. For each participant,
-    3 sessions are performed on different days, and each session contains 24 trials. 
-    In one trial, the participant watch one of the film clips, while his(her) EEG 
-    signals and eye movements are collected with the 62-channel ESI NeuroScan System 
-    and SMI eye-tracking glasses.
-    """
-    
-    
+    """Load per-subject SEED segments saved as NumPy arrays."""
 
-         
-    
-    
-    # Load samples
+
     samples_by_subject = 0
     X = []
     Y = []
@@ -180,84 +154,71 @@ def load_seed_raw(args, path, session="all", feature="LDS", n_samples=185):
 
         X_subjects[subj] = trial_data
         Y_subjects[subj] = trial_label
-        # increment rang
         print(X_subjects[subj].shape)
-  
+
     trg_subj = args.target - 1
     Tx = np.array(X_subjects[trg_subj])
-    Ty = np.array(Y_subjects[trg_subj])   
+    Ty = np.array(Y_subjects[trg_subj])
     subject_ids = X_subjects.keys()
     num_domains = len(subject_ids)
-    Tx, m, std = z_score(Tx)    
-    # Train dataset
+    Tx, m, std = z_score(Tx)
     train_loader = UnalignedDataLoader()
     train_loader.initialize(num_domains, X_subjects, Y_subjects, Tx, Ty, trg_subj, args.batch_size, args.batch_size, shuffle_testing=True, drop_last_testing=True)
     datasets = train_loader.load_data()
-    #classes = np.unique(Ty)
-    # Test dataset
     test_loader = UnalignedDataLoaderTesting()
     test_loader.initialize(Tx, Ty, 200, shuffle_testing=False, drop_last_testing=False)
     dataset_test = test_loader.load_data()
-    
+
     return datasets, dataset_test
 
 
-
 def load_seed_three_feature(args, path, session="all", feature="LDS", n_samples=185):
-    """
-    SEED I
-    A total number of 15 subjects participated the experiment. For each participant,
-    3 sessions are performed on different days, and each session contains 24 trials. 
-    In one trial, the participant watch one of the film clips, while his(her) EEG 
-    signals and eye movements are collected with the 62-channel ESI NeuroScan System 
-    and SMI eye-tracking glasses.
-    """
-    
-    
+    """Load and concatenate SEED differential-entropy, PSD, and PLV features."""
+
+
     session1 = [
         "1_20131027",
-        "2_20140404", 
-        "3_20140603", 
-        "4_20140621", 
-        "5_20140411", 
-        "6_20130712", 
+        "2_20140404",
+        "3_20140603",
+        "4_20140621",
+        "5_20140411",
+        "6_20130712",
         "7_20131027",
         "8_20140511",
         "9_20140620",
-        "10_20131130", 
+        "10_20131130",
         "11_20140618",
         "12_20131127",
-        "13_20140527", 
-        "14_20140601", 
+        "13_20140527",
+        "14_20140601",
         "15_20130709"
         ]
-        
+
     session2 = [
-        "1_20131030", 
-        "2_20140413", 
-        "3_20140611", 
+        "1_20131030",
+        "2_20140413",
+        "3_20140611",
         "4_20140702",
-        "5_20140418",  
-        "6_20131016", 
-        "7_20131030", 
-        "8_20140514", 
-        "9_20140627", 
-        "10_20131204",  
+        "5_20140418",
+        "6_20131016",
+        "7_20131030",
+        "8_20140514",
+        "9_20140627",
+        "10_20131204",
         "11_20140625",
-        "12_20131201", 
-        "13_20140603", 
+        "12_20131201",
+        "13_20140603",
         "14_20140615",
         "15_20131016",
         ]
-        
-    # SESSION 3
-    
+
+
     session3 = [
         "1_20131107",
         "2_20140419",
         "3_20140629",
         "4_20140705",
-        "5_20140506", 
+        "5_20140506",
         "6_20131113",
         "7_20131106",
         "8_20140521",
@@ -265,31 +226,28 @@ def load_seed_three_feature(args, path, session="all", feature="LDS", n_samples=
         "10_20131211",
         "11_20140630",
         "12_20131207",
-        "13_20140610", 
+        "13_20140610",
         "14_20140627",
         "15_20131105"
         ]
-        
-    feature_2 = 'psd_LDS'
-    feature_3 = 'PLV'    
 
-    # LABELS
+    feature_2 = 'psd_LDS'
+    feature_3 = 'PLV'
+
     labels = scipy.io.loadmat(path + "label.mat", mat_dtype=True)
     y_session = labels["label"][0]
-    # relabel to neural networks [0,1,2]
+    # Map -1, 0, 1 to 0, 1, 2.
     for i in range(len(y_session)):
         y_session[i] += 1
     print(y_session)
-    
-    # select session
+
     if session == 1:
         x_session = session1
     elif session == 2:
         x_session = session2
     elif session == 3:
         x_session = session3
-    
-    # Load samples
+
     samples_by_subject = 0
     X = []
     plv = []
@@ -298,64 +256,34 @@ def load_seed_three_feature(args, path, session="all", feature="LDS", n_samples=
     contact = False
     index = 0
     for subj in x_session:
-        # load data .mat
         dataMat = scipy.io.loadmat(path + subj + ".mat", mat_dtype=True)
         plv_dir_data = f"/home/lyc/dataset/seed_plv//S{index+1}_session{session}_plv.npy"
-        plvMat = np.load(plv_dir_data, allow_pickle=True)        
-        # psdMat = scipy.io.loadmat(path + subj + "_PSD.mat", mat_dtype=True)
+        plvMat = np.load(plv_dir_data, allow_pickle=True)
         print("Subject load:", subj)
         plv_feature = plvMat.reshape(-1,62,5)
-        # print("plv_feature:", plv_feature.shape)
         if contact == 0:
-                plv = plv_feature 
+                plv = plv_feature
                 contact = True
         else:
                 plv = np.concatenate((plv, plv_feature), axis=0)
-               
-        # print("plv:", plv.shape)
+
         index += 1
         for i in range(15):
 
-            # "Differential_entropy (DE)"
-            #   62 channels
-            #   42 epochs
-            #   5 frequency band
             features = dataMat[feature+str(i+1)]
             PSD_feature = dataMat[feature_2+str(i+1)]
-            # [1D]
             features = np.swapaxes(features, 0, 1)
             PSD_feature = np.swapaxes(PSD_feature, 0, 1)
-            # [select last 'n_samples' samples]
             if (features.shape[0] - n_samples) > 0:
                 pos = features.shape[0] - n_samples
                 features = features[pos:]
                 PSD_feature = PSD_feature[pos:]
 
 
-            # [Build temporal samples]
-            # + ++ + + + + + + + + ++  +
-
-            # feats = features
-            # window_size = 9
-            # temp_feats = None
-            # b = False
-            # for a in range(len(feats) - window_size + 1):
-            #     f = feats[a:a+window_size]
-            #     f = np.expand_dims(f, axis=0)
-            #     if not b:
-            #         temp_feats = f
-            #         b = True
-            #     else:
-            #         temp_feats = np.concatenate((temp_feats, f), axis=0)
             features = np.stack([features, PSD_feature], axis=1)
-            # ++ + ++ + + + + + ++ +
 
-            # set labels for each epoch
             labels = np.array([y_session[i]] * features.shape[0])
-            # print("labels:", labels.shape)
-            # print("features:", features.shape)
-            
-            # add to arrays
+
             if flag == 0:
                 X = features
                 Y = labels
@@ -363,17 +291,15 @@ def load_seed_three_feature(args, path, session="all", feature="LDS", n_samples=
             else:
                 X = np.concatenate((X, features), axis=0)
                 Y = np.concatenate((Y, labels), axis=0)
-        
+
         if samples_by_subject == 0:
             samples_by_subject = len(X)
     print("X:", X.shape)
     print("plv:", plv.shape)
-    plv = plv[:, np.newaxis, :, :]  # shape: [100, 1, 62, 5]
-    # plv = plv[:, np.newaxis, :, :]  # shape: [100, 1, 62, 5]
-    X = np.concatenate([X, plv], axis=1)  # shape: [100, 3, 62, 5]
+    plv = plv[:, np.newaxis, :, :]
+    X = np.concatenate([X, plv], axis=1)
     zero_pad = np.zeros((X.shape[0], 1, 62, 5), dtype=X.dtype)
     X = np.concatenate([X, zero_pad], axis=1)
-    # reorder data by subject
     X_subjects = {}
     Y_subjects = {}
     n = samples_by_subject
@@ -381,33 +307,29 @@ def load_seed_three_feature(args, path, session="all", feature="LDS", n_samples=
     for subj in range(len(x_session)):
         X_subjects[subj] = X[r:r+n]
         Y_subjects[subj] = Y[r:r+n]
-        # increment range
         r += n
         print(X_subjects[subj].shape)
     trg_subj = args.target - 1
     Tx = np.array(X_subjects[trg_subj])
-    Ty = np.array(Y_subjects[trg_subj])   
+    Ty = np.array(Y_subjects[trg_subj])
     subject_ids = X_subjects.keys()
     num_domains = len(subject_ids)
-    Tx, m, std = z_score(Tx)    
-    # Train dataset
+    Tx, m, std = z_score(Tx)
     train_loader = UnalignedDataLoader()
     train_loader.initialize(num_domains, X_subjects, Y_subjects, Tx, Ty, trg_subj, args.batch_size, args.batch_size, shuffle_testing=True, drop_last_testing=True)
     datasets = train_loader.load_data()
-    #classes = np.unique(Ty)
-    # Test dataset
     test_loader = UnalignedDataLoaderTesting()
     test_loader.initialize(Tx, Ty, 200, shuffle_testing=False, drop_last_testing=False)
     dataset_test = test_loader.load_data()
-    
+
     return datasets, dataset_test, X_subjects, Y_subjects
 
 def load_seedv(args, path, session="all", feature="LDS", n_samples=185):
     import scipy.io
     import numpy as np
 
-    session1 = ["1_123", "2_123", "3_123", "4_123", "5_123", 
-                "6_123", "7_123", "8_123", "9_123", "10_123", 
+    session1 = ["1_123", "2_123", "3_123", "4_123", "5_123",
+                "6_123", "7_123", "8_123", "9_123", "10_123",
                 "11_123", "12_123", "13_123", "14_123", "15_123", "16_123"]
 
 
@@ -422,23 +344,22 @@ def load_seedv(args, path, session="all", feature="LDS", n_samples=185):
 
     X_subjects = {}
     Y_subjects = {}
-    
+
     for subj_idx, subj in enumerate(x_session):
         print("Subject load:", subj)
         dataMat = np.load(path + subj + ".npz", allow_pickle=True)
-    
+
         subj_X_list = []
         subj_Y_list = []
         data_bytes = dataMat["data"].item()
         label_bytes = dataMat["label"].item()
-        # 用 pickle 反序列化
         data = pickle.loads(data_bytes)
         label = pickle.loads(label_bytes)
         concat_fea = []
         concat_label = []
         first = False
-        for trial_idx in range(15,30): #(30,45)
-            feature = data[trial_idx]  # shape: (T, 62, 5)
+        for trial_idx in range(15,30):
+            feature = data[trial_idx]
             one_label = label[trial_idx]
             if first is False:
                 concat_fea = feature
@@ -447,26 +368,23 @@ def load_seedv(args, path, session="all", feature="LDS", n_samples=185):
             else:
                 concat_fea = np.concatenate((concat_fea, feature), axis=0)
                 concat_label = np.concatenate((concat_label, one_label), axis=0)
-            
-        
-        # Once per subject
+
+
         X_subjects[subj_idx] = concat_fea
         Y_subjects[subj_idx] = concat_label
         print(f"Subject {subj_idx+1}: {X_subjects[subj_idx].shape}, Labels: {Y_subjects[subj_idx].shape}")
-    
+
     trg_subj = args.target - 1
     Tx = X_subjects[trg_subj]
     Ty = Y_subjects[trg_subj]
     Tx, m, std = z_score(Tx)
 
-    # Train loader
     train_loader = UnalignedDataLoader()
     train_loader.initialize(len(x_session), X_subjects, Y_subjects, Tx, Ty, trg_subj,
                             args.batch_size, args.batch_size,
                             shuffle_testing=True, drop_last_testing=True)
     datasets = train_loader.load_data()
 
-    # Test loader
     test_loader = UnalignedDataLoaderTesting()
     test_loader.initialize(Tx, Ty, 200, shuffle_testing=False, drop_last_testing=False)
     dataset_test = test_loader.load_data()
@@ -496,7 +414,7 @@ def fine_tuning_load_XY(args, X, Y):
                 tr_x = np.array(X[s])
                 tr_y = np.array(Y[s])
 
-                # 每个源受试者单独做 z-score，保持你原逻辑不变
+                # Standardize each source subject independently.
                 tr_x, m, std = z_score(tr_x)
 
                 if not flag:
@@ -512,13 +430,10 @@ def fine_tuning_load_XY(args, X, Y):
 
         print("[+] Target subject:", trg_subj)
 
-        # 目标受试者
         Tx = np.array(X[trg_subj])
         Ty = np.array(Y[trg_subj])
 
-        # 这里保持和你原来一样：
-        # Tx 用来估计目标域均值方差
-        # Vx 用同样统计量归一化，作为 test
+        # Reuse target-domain statistics for evaluation.
         Vx = Tx.copy()
         Vy = Ty.copy()
 
@@ -529,7 +444,6 @@ def fine_tuning_load_XY(args, X, Y):
         print("Tx_train:", Tx.shape, "Ty_train:", Ty.shape)
         print("Tx_test:", Vx.shape, "Ty_test:", Vy.shape)
 
-        # tensor
         Sx_tensor = torch.tensor(Sx, dtype=torch.float32)
         Sy_tensor = torch.tensor(Sy, dtype=torch.long)
 
@@ -539,13 +453,11 @@ def fine_tuning_load_XY(args, X, Y):
         Vx_tensor = torch.tensor(Vx, dtype=torch.float32)
         Vy_tensor = torch.tensor(Vy, dtype=torch.long)
 
-        # dataset
         source_tr = TensorDataset(Sx_tensor, Sy_tensor)
-        # Keep target labels in the held-out loader only; optimization sees Tx.
+        # Unlabeled target batches and labeled evaluation batches.
         target_tr = TensorDataset(Tx_tensor)
         target_ts = TensorDataset(Vx_tensor, Vy_tensor)
 
-        # dataloader
         dset_loaders["source"] = DataLoader(
             source_tr,
             batch_size=args.batch_size_fine,
@@ -582,8 +494,8 @@ def load_seedveye(args, path, session="all", feature="LDS", n_samples=185):
     import scipy.io
     import numpy as np
 
-    session1 = ["1_123", "2_123", "3_123", "4_123", "5_123", 
-                "6_123", "7_123", "8_123", "9_123", "10_123", 
+    session1 = ["1_123", "2_123", "3_123", "4_123", "5_123",
+                "6_123", "7_123", "8_123", "9_123", "10_123",
                 "11_123", "12_123", "13_123", "14_123", "15_123", "16_123"]
 
 
@@ -598,7 +510,7 @@ def load_seedveye(args, path, session="all", feature="LDS", n_samples=185):
 
     X_subjects = {}
     Y_subjects = {}
-    eyepath = "E:\Research\EEGDataSet\SEED-V\Eye_movement_features/"
+    eyepath = r"E:\Research\EEGDataSet\SEED-V\Eye_movement_features/"
     for subj_idx, subj in enumerate(x_session):
         print("Subject load:", subj)
         dataMat = np.load(path + subj + ".npz", allow_pickle=True)
@@ -609,7 +521,6 @@ def load_seedveye(args, path, session="all", feature="LDS", n_samples=185):
         label_bytes = dataMat["label"].item()
         eyedata_bytes = eyedataMat["data"].item()
         eyelabel_bytes = eyedataMat["label"].item()
-        # 用 pickle 反序列化
         data = pickle.loads(data_bytes)
         label = pickle.loads(label_bytes)
         eyedata = pickle.loads(eyedata_bytes)
@@ -617,8 +528,8 @@ def load_seedveye(args, path, session="all", feature="LDS", n_samples=185):
         concat_fea = []
         concat_label = []
         first = False
-        for trial_idx in range(15,30): #(30,45)15,30
-            feature = data[trial_idx]  # shape: (T, 62, 5)
+        for trial_idx in range(15,30):
+            feature = data[trial_idx]
             eye_fea = eyedata[trial_idx]
             one_label = label[trial_idx]
             feature = np.concatenate((feature, eye_fea), axis=1)
@@ -629,26 +540,23 @@ def load_seedveye(args, path, session="all", feature="LDS", n_samples=185):
             else:
                 concat_fea = np.concatenate((concat_fea, feature), axis=0)
                 concat_label = np.concatenate((concat_label, one_label), axis=0)
-            
-        
-        # Once per subject
+
+
         X_subjects[subj_idx] = concat_fea
         Y_subjects[subj_idx] = concat_label
         print(f"Subject {subj_idx+1}: {X_subjects[subj_idx].shape}, Labels: {Y_subjects[subj_idx].shape}")
-    
+
     trg_subj = args.target - 1
     Tx = X_subjects[trg_subj]
     Ty = Y_subjects[trg_subj]
     Tx, m, std = z_score(Tx)
 
-    # Train loader
     train_loader = UnalignedDataLoader()
     train_loader.initialize(len(x_session), X_subjects, Y_subjects, Tx, Ty, trg_subj,
                             args.batch_size, args.batch_size,
                             shuffle_testing=True, drop_last_testing=True)
     datasets = train_loader.load_data()
 
-    # Test loader
     test_loader = UnalignedDataLoaderTesting()
     test_loader.initialize(Tx, Ty, 200, shuffle_testing=False, drop_last_testing=False)
     dataset_test = test_loader.load_data()
@@ -659,108 +567,6 @@ def load_seedveye(args, path, session="all", feature="LDS", n_samples=185):
 import os
 import scipy.io
 import numpy as np
-
-# def load_bnci2014012(args,
-#                      path=r"E:\Research\EEGDataSet\BNCI2014012/saved_features/",
-#                      n_samples=750):
-#     """
-#     BNCI2014012 运动想象数据集加载函数（不做滑动窗口）
-
-#     每个受试者文件:
-#         A1.mat ~ A9.mat
-
-#     文件内变量:
-#         x: [22, 750, 144]   -> [channels, time, trials]
-#         y: [144, 1]         -> 标签
-
-#     输出:
-#         datasets, dataset_test, X_subjects, Y_subjects
-
-#     最终:
-#         X_subjects[subj_idx]: [144, 750, 22]
-#         Y_subjects[subj_idx]: [144]
-#     """
-
-#     subject_files = [f"A{i}_features.mat" for i in range(1, 10)]
-#     X_subjects = {}
-#     Y_subjects = {}
-
-#     for subj_idx, subj_file in enumerate(subject_files):
-#         full_path = os.path.join(path, subj_file)
-#         print("Subject load:", subj_file)
-
-#         dataMat = scipy.io.loadmat(full_path, mat_dtype=True)
-
-#         # 读取数据
-#         x = np.asarray(dataMat["x_cov"], dtype=np.float32)   # [22, 750, 144]
-#         y = np.asarray(dataMat["y_sub"]).squeeze()           # [144]
-
-#         if y.ndim > 1:
-#             y = y.reshape(-1)
-
-#         # 标签映射成连续整数 0,1,...
-#         unique_labels = np.unique(y)
-#         label_map = {lab: idx for idx, lab in enumerate(sorted(unique_labels))}
-#         y = np.array([label_map[lab] for lab in y], dtype=np.int64)
-
-#         subj_X_list = []
-#         subj_Y_list = []
-
-#         n_trials = x.shape[2]   # 144
-
-#         for trial_idx in range(n_trials):
-#             # 单个 trial: [22, 750] -> [750, 22]
-#             features = x[:, :, trial_idx].transpose(1, 0)
-
-#             # 如果需要，只保留最后 n_samples 个时间点
-#             if features.shape[0] > n_samples:
-#                 features = features[-n_samples:]
-
-#             subj_X_list.append(np.expand_dims(features, axis=0))  # [1, 750, 22]
-#             subj_Y_list.append(y[trial_idx])
-
-#         X_subjects[subj_idx] = np.concatenate(subj_X_list, axis=0).astype(np.float32)  # [144, 750, 22]
-#         Y_subjects[subj_idx] = np.array(subj_Y_list, dtype=np.int64)                    # [144]
-
-#         print(f"Subject {subj_idx + 1}: {X_subjects[subj_idx].shape}, Labels: {Y_subjects[subj_idx].shape}")
-
-#     # 目标受试者
-#     trg_subj = args.target - 1
-#     Tx = X_subjects[trg_subj]
-#     Ty = Y_subjects[trg_subj]
-
-#     # 和你原逻辑一致：只对目标域做 z-score
-#     Tx, m, std = z_score(Tx)
-
-#     # Train loader
-#     train_loader = UnalignedDataLoader()
-#     train_loader.initialize(
-#         len(subject_files),
-#         X_subjects,
-#         Y_subjects,
-#         Tx,
-#         Ty,
-#         trg_subj,
-#         args.batch_size,
-#         args.batch_size,
-#         shuffle_testing=True,
-#         drop_last_testing=True
-#     )
-#     datasets = train_loader.load_data()
-
-#     # Test loader
-#     test_loader = UnalignedDataLoaderTesting()
-#     test_loader.initialize(
-#         Tx,
-#         Ty,
-#         200,
-#         shuffle_testing=False,
-#         drop_last_testing=False
-#     )
-#     dataset_test = test_loader.load_data()
-
-#     return datasets, dataset_test, X_subjects, Y_subjects
-
 
 def fine_tuning_load_XY_MI(args, X, Y):
     dset_loaders = {}
@@ -785,7 +591,7 @@ def fine_tuning_load_XY_MI(args, X, Y):
                 tr_x = np.array(X[s])
                 tr_y = np.array(Y[s])
 
-                # 每个源受试者单独做 z-score，保持你原逻辑不变
+                # Standardize each source subject independently.
                 tr_x, m, std = z_score(tr_x)
 
                 if not flag:
@@ -801,13 +607,10 @@ def fine_tuning_load_XY_MI(args, X, Y):
 
         print("[+] Target subject:", trg_subj)
 
-        # 目标受试者
         Tx = np.array(X[trg_subj])
         Ty = np.array(Y[trg_subj])
 
-        # 这里保持和你原来一样：
-        # Tx 用来估计目标域均值方差
-        # Vx 用同样统计量归一化，作为 test
+        # Reuse target-domain statistics for evaluation.
         Vx = Tx.copy()
         Vy = Ty.copy()
 
@@ -818,7 +621,6 @@ def fine_tuning_load_XY_MI(args, X, Y):
         print("Tx_train:", Tx.shape, "Ty_train:", Ty.shape)
         print("Tx_test:", Vx.shape, "Ty_test:", Vy.shape)
 
-        # tensor
         Sx_tensor = torch.tensor(Sx, dtype=torch.float32)
         Sy_tensor = torch.tensor(Sy, dtype=torch.long)
 
@@ -828,13 +630,11 @@ def fine_tuning_load_XY_MI(args, X, Y):
         Vx_tensor = torch.tensor(Vx, dtype=torch.float32)
         Vy_tensor = torch.tensor(Vy, dtype=torch.long)
 
-        # dataset
         source_tr = TensorDataset(Sx_tensor, Sy_tensor)
-        # Keep target labels in the held-out loader only; optimization sees Tx.
+        # Unlabeled target batches and labeled evaluation batches.
         target_tr = TensorDataset(Tx_tensor)
         target_ts = TensorDataset(Vx_tensor, Vy_tensor)
 
-        # dataloader
         dset_loaders["source"] = DataLoader(
             source_tr,
             batch_size=args.batch_size_fine,
@@ -865,7 +665,6 @@ def fine_tuning_load_XY_MI(args, X, Y):
         exit()
 
     return dset_loaders
-
 
 
 import os
@@ -902,21 +701,14 @@ def _safe_scalar(container, key, default=None, is_h5=False):
 
 
 def _mat_numeric_to_real_numpy(x, var_name="array", imag_tol=1e-6):
-    """
-    将 MATLAB 读出的数值数组安全转换成 numpy 实数数组
+    """Convert MATLAB numeric arrays to float32, retaining the real component.
 
-    支持:
-    1) 普通 float/int 数组
-    2) numpy complex 数组
-    3) MATLAB v7.3 经 h5py 读取后的复数 structured dtype:
-       dtype([('real','<f4'), ('imag','<f4')])
-
-    返回:
-        np.float32 实数数组
+    Accepts NumPy numeric arrays and MATLAB v7.3 real/imag records.
+    Warns when the discarded imaginary component exceeds imag_tol.
     """
     x = np.asarray(x)
 
-    # 情况1：MATLAB复数通过 h5py 读成 structured dtype
+    # MATLAB v7.3 stores complex values as real/imag fields.
     if x.dtype.names is not None:
         names = set(x.dtype.names)
         if "real" in names and "imag" in names:
@@ -935,7 +727,6 @@ def _mat_numeric_to_real_numpy(x, var_name="array", imag_tol=1e-6):
                 f"{var_name} 是结构化 dtype，但不是支持的 real/imag 格式: {x.dtype}"
             )
 
-    # 情况2：标准 complex 数组
     if np.iscomplexobj(x):
         imag_max = float(np.max(np.abs(np.imag(x)))) if x.size > 0 else 0.0
         if imag_max > imag_tol:
@@ -945,33 +736,23 @@ def _mat_numeric_to_real_numpy(x, var_name="array", imag_tol=1e-6):
             )
         return np.real(x).astype(np.float32)
 
-    # 情况3：普通数值数组
     return np.asarray(x, dtype=np.float32)
 
 
 def _fix_x_shape_mi1(x, n_windows=3, feat_dim_hint=None, n_samples_hint=None):
-    """
-    统一把 X 调整成 [N, W, F]
+    """Arrange features as [trials, windows, features].
 
-    兼容:
-    - [N, W, F]
-    - [F, W, N]
-    - [W, N, F] 等任意三维排列
-    - 当 W=1 时，也兼容二维:
-        [N, F] 或 [F, N]
+    Accepts three-dimensional axis permutations, or [trials, features]
+    and its transpose when n_windows is 1.
     """
     x = _mat_numeric_to_real_numpy(x, var_name="X")
     x = np.asarray(x)
 
-    # 不要一上来直接 squeeze 掉所有 1 维
-    # 只在维度超过 3 时，逐步去掉多余 singleton 维
+    # Preserve the window axis when W = 1.
     while x.ndim > 3 and 1 in x.shape:
         axis_to_squeeze = list(x.shape).index(1)
         x = np.squeeze(x, axis=axis_to_squeeze)
 
-    # -------------------------
-    # 情况1：三维，正常处理
-    # -------------------------
     if x.ndim == 3:
         perms = [
             x,
@@ -984,7 +765,6 @@ def _fix_x_shape_mi1(x, n_windows=3, feat_dim_hint=None, n_samples_hint=None):
 
         candidates = []
         for arr in perms:
-            # 目标格式必须是 [N, W, F]
             if arr.shape[1] != n_windows:
                 continue
 
@@ -1006,21 +786,15 @@ def _fix_x_shape_mi1(x, n_windows=3, feat_dim_hint=None, n_samples_hint=None):
         candidates.sort(key=lambda z: z[0], reverse=True)
         return candidates[0][1].astype(np.float32)
 
-    # -------------------------
-    # 情况2：二维，只允许在 W=1 时出现
-    # -------------------------
     if x.ndim == 2:
         if n_windows != 1:
             raise ValueError(
                 f"X 当前是二维 shape={x.shape}，但 n_windows={n_windows}，无法解释。"
             )
 
-        # 两种可能:
-        # 1) [N, F] -> 变成 [N, 1, F]
-        # 2) [F, N] -> 转置后变成 [N, 1, F]
         cands = [
-            x[:, None, :],     # [N,1,F]
-            x.T[:, None, :]    # [N,1,F] （由[F,N]转来）
+            x[:, None, :],
+            x.T[:, None, :]
         ]
 
         scored = []
@@ -1040,15 +814,10 @@ def _fix_x_shape_mi1(x, n_windows=3, feat_dim_hint=None, n_samples_hint=None):
     raise ValueError(f"X 应该是 2 维或 3 维数组，但当前 shape={x.shape}")
 
 def _read_mi1_loso_mat(full_path, n_windows=3):
-    """
-    读取 MI1 的 LOSO 特征文件
+    """Read a LOSO MAT file.
 
-    返回:
-        X_all      : [N, W, F]
-        Y_all      : [N]
-        subject_id : [N]
-        is_target  : [N]
-        meta       : dict
+    Returns X [trials, windows, features], labels, subject IDs,
+    target flags, and feature metadata.
     """
     if not os.path.exists(full_path):
         raise FileNotFoundError(f"找不到文件: {full_path}")
@@ -1056,7 +825,6 @@ def _read_mi1_loso_mat(full_path, n_windows=3):
     meta = {}
 
     try:
-        # 普通 mat
         data = scipy.io.loadmat(full_path)
 
         x_key = _get_first_existing_key(data, ["X_split", "X_all"])
@@ -1075,7 +843,7 @@ def _read_mi1_loso_mat(full_path, n_windows=3):
         meta["USE_GFK"] = _safe_scalar(data, "USE_GFK", default=None, is_h5=False)
 
     except (NotImplementedError, ValueError, OSError):
-        # MATLAB -v7.3
+        # MATLAB v7.3 (HDF5).
         with h5py.File(full_path, "r") as f:
             x_key = _get_first_existing_key(f, ["X_split", "X_all"])
             y_key = _get_first_existing_key(f, ["Y_split", "Y_all"])
@@ -1092,7 +860,6 @@ def _read_mi1_loso_mat(full_path, n_windows=3):
             meta["k"] = _safe_scalar(f, "k", default=None, is_h5=True)
             meta["USE_GFK"] = _safe_scalar(f, "USE_GFK", default=None, is_h5=True)
 
-    # 优先使用 feat_dim_out
     feat_dim_hint = meta.get("feat_dim_out", None)
     if feat_dim_hint is None:
         feat_dim_hint = meta.get("feat_dim", None)
@@ -1116,18 +883,10 @@ def load_mi1(args,
              path=r"E:\Research\EEGDataSet\BNCI20140mi1\saved_loso_window_logmap_gfk",
              n_windows=3,
              k=25):
-    """
-    读取 MI1 数据集的 LOSO + 时间窗 + logmap + GFK 特征
+    """Load one LOSO fold and build training and evaluation loaders.
 
-    文件名格式:
-        MI1_LOSO_target_01_W3_logmap_gfk_k25.mat
-
-    返回:
-        datasets, dataset_test, X_subjects, Y_subjects
-
-    其中:
-        X_subjects[subj_idx]: [200, W, F]
-        Y_subjects[subj_idx]: [200]
+    X_subjects maps subject indices to [trials, windows, features] arrays;
+    Y_subjects contains the corresponding labels.
     """
     file_name = f"MI1_LOSO_target_{args.target:02d}_W{n_windows}_logmap_gfk_k10.mat"
     full_path = os.path.join(path, file_name)
@@ -1141,18 +900,17 @@ def load_mi1(args,
 
     print("Raw loaded shapes:")
     print("  X_all      :", X_all.shape)       # [N, W, F]
-    print("  Y_all      :", Y_all.shape)       # [N]
-    print("  subject_id :", subject_id.shape)  # [N]
-    print("  is_target  :", is_target.shape)   # [N]
+    print("  Y_all      :", Y_all.shape)
+    print("  subject_id :", subject_id.shape)
+    print("  is_target  :", is_target.shape)
     print("  meta       :", meta)
     print("Loaded feature dim:", X_all.shape[2])
 
-    # 标签映射到连续整数 0,1,...
+    # Map labels to contiguous class indices.
     unique_labels = np.unique(Y_all)
     label_map = {lab: idx for idx, lab in enumerate(sorted(unique_labels))}
     Y_all = np.array([label_map[lab] for lab in Y_all], dtype=np.int64)
 
-    # 按受试者拆分
     X_subjects = {}
     Y_subjects = {}
 
@@ -1160,15 +918,14 @@ def load_mi1(args,
 
     for subj in range(1, num_subjects + 1):
         mask = (subject_id == subj)
-        subj_X = X_all[mask].astype(np.float32)   # [200, W, F]
-        subj_Y = Y_all[mask].astype(np.int64)     # [200]
+        subj_X = X_all[mask].astype(np.float32)   # [trials, windows, features]
+        subj_Y = Y_all[mask].astype(np.int64)
 
         X_subjects[subj - 1] = subj_X
         Y_subjects[subj - 1] = subj_Y
 
         print(f"Subject {subj}: X={subj_X.shape}, Y={subj_Y.shape}")
 
-    # 当前目标受试者
     trg_subj = args.target - 1
     if trg_subj < 0 or trg_subj >= num_subjects:
         raise ValueError(
@@ -1178,10 +935,8 @@ def load_mi1(args,
     Tx = X_subjects[trg_subj].copy()
     Ty = Y_subjects[trg_subj].copy()
 
-    # 只对目标域做 z-score
     Tx, m, std = z_score(Tx)
 
-    # train loader
     train_loader = UnalignedDataLoader()
     train_loader.initialize(
         num_subjects,
@@ -1197,7 +952,6 @@ def load_mi1(args,
     )
     datasets = train_loader.load_data()
 
-    # test loader
     test_loader = UnalignedDataLoaderTesting()
     test_loader.initialize(
         Tx,

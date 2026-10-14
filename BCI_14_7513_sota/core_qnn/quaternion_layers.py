@@ -230,7 +230,6 @@ class QuaternionLinearAutograd(Module):
                     self.rng, self.init_criterion)
 
     def forward(self, input):
-        # See the autograd section for explanation of what happens here.
         if self.rotation:
             return quaternion_linear_rotation(input, self.zero_kernel, self.r_weight, self.i_weight, self.j_weight, self.k_weight, self.bias, self.quaternion_format, self.scale_param)
         else:
@@ -282,7 +281,6 @@ class QuaternionLinear(Module):
                     self.rng, self.init_criterion)
 
     def forward(self, input):
-        # See the autograd section for explanation of what happens here.
         if input.dim() == 3:
             T, N, C = input.size()
             input  = input.view(T * N, C)

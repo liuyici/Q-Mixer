@@ -1,12 +1,10 @@
 import torch
 import numpy as np
-# from modules import z_score
 from datasets_ import Dataset
-# from modules import PseudoLabeledData
 
 
 class UnlabeledDataset(torch.utils.data.Dataset):
-    """Target samples for optimization; deliberately has no label field."""
+    """Target-domain features for adaptation."""
 
     def __init__(self, data):
         self.data = torch.as_tensor(data, dtype=torch.float32)
@@ -47,7 +45,6 @@ class PairedData(object):
         return self
 
     def __next__(self):
-        # initialize
         src_x = []
         src_y = []
 
@@ -85,39 +82,28 @@ class PairedData(object):
         else:
             self.iter += 1
             data = {}
-            # add source data
             for i in range(self.num_domains_src):
                 data["Sx" + str(i + 1)] = src_x[i]
                 data["Sy" + str(i + 1)] = src_y[i]
-            # add target data
             data["Tx"] = trg_x
-            # Keep target labels out of optimization batches; use them only in the final report.
 
             return data
-
-
 
 
 class UnalignedDataLoader():
     def initialize(self, num_domains, Sx, Sy, Tx, Ty, trg_subject, batch_size_src, batch_size_trg, drop_last_testing, shuffle_testing):
 
-        # source domain
         self.dataset_src = []
         data_loader_src = []
 
-        #####################################
-        ###### MULTIPLES DOMINIOS ###########
-        #####################################
         num_domains_src = num_domains - 1
         print("[*] Target subject", trg_subject)
-        # Store SOURCE DOMAINS
         for i in range(num_domains):
             if i != trg_subject:
-                # obtain data from subject 's'
                 x_tr = np.array(Sx[i])
                 y_tr = np.array(Sy[i])
 
-                # Standardize training data
+                # Standardize each source subject independently.
                 x_tr, m, std = z_score(x_tr)
 
                 a = len(np.where(y_tr == 0)[0])
@@ -129,11 +115,9 @@ class UnalignedDataLoader():
                 dataset = Dataset(x_tr, y_tr)
                 self.dataset_src.append(dataset)
                 data_loader_src.append(torch.utils.data.DataLoader(dataset, batch_size=batch_size_src, shuffle=True, num_workers=0, drop_last=True))
-        #################################################
 
 
-        # Store unlabeled TARGET DOMAIN. Ty is retained in the signature for
-        # compatibility but is intentionally not passed to this loader.
+        # Ty is accepted by this API; training batches contain features only.
         dataset_target = UnlabeledDataset(Tx)
         data_loader_trg = torch.utils.data.DataLoader(dataset_target, batch_size=batch_size_trg, shuffle=shuffle_testing, num_workers=0, drop_last=drop_last_testing)
 
@@ -178,7 +162,6 @@ class PairedDataModified(object):
         return self
 
     def __next__(self):
-        # initialize
         src_x = []
         src_y = []
 
@@ -198,7 +181,7 @@ class PairedDataModified(object):
             if not self.stop_src[i]:
                 stop = False
 
-        # inputs_target, pseudo_labels_target, weights
+        # Target features, pseudo-labels, and sample weights.
         trg_x, trg_y, trg_w = None, None, None
 
         try:
@@ -218,11 +201,9 @@ class PairedDataModified(object):
         else:
             self.iter += 1
             data = {}
-            # add source data
             for i in range(self.num_domains_src):
                 data["Sx" + str(i + 1)] = src_x[i]
                 data["Sy" + str(i + 1)] = src_y[i]
-            # add target data
             data["Tx"] = trg_x
             data["Ty"] = trg_y
             data["Tw"] = trg_w
@@ -233,27 +214,23 @@ class PairedDataModified(object):
 class UnalignedDataLoaderModified():
     def initialize(self, num_domains, Sx, Sy, target_tr, trg_subject, batch_size_src, batch_size_trg):
 
-        # source domain
         self.dataset_src = []
         data_loader_src = []
 
         num_domains_src = num_domains - 1
         print("[*] Target subject", trg_subject)
-        # Store SOURCE DOMAINS
         for i in range(num_domains):
             if i != trg_subject:
-                # obtain data from subject 's'
                 x_tr = np.array(Sx[i])
                 y_tr = np.array(Sy[i])
 
-                # Standardize training data
+                # Standardize each source subject independently.
                 x_tr, m, std = z_score(x_tr)
 
                 dataset = Dataset(x_tr, y_tr)
                 self.dataset_src.append(dataset)
                 data_loader_src.append(torch.utils.data.DataLoader(dataset, batch_size=batch_size_src, shuffle=True, num_workers=0, drop_last=True))
 
-        # Store TARGET DOMAIN
         data_loader_trg = torch.utils.data.DataLoader(target_tr, batch_size=batch_size_trg, shuffle=True, num_workers=0, drop_last=True)
 
         self.dataset_t = target_tr
@@ -278,7 +255,6 @@ class UnalignedDataLoaderModified():
 class UnalignedDataLoaderTesting():
     def initialize(self, Tx, Ty, batch_size_trg, drop_last_testing, shuffle_testing):
 
-        # Store TARGET DOMAIN
         dataset_target = Dataset(Tx, Ty)
         data_loader_trg = torch.utils.data.DataLoader(dataset_target, batch_size=batch_size_trg, shuffle=shuffle_testing, num_workers=0, drop_last=drop_last_testing)
 
@@ -293,7 +269,6 @@ class UnalignedDataLoaderTesting():
 
     def __len__(self):
         return len(self.dataset_t)
-
 
 
 class PairedDataTesting(object):
@@ -313,20 +288,12 @@ class PairedDataTesting(object):
         try:
             trg_x, trg_y = next(self.data_loader_trg_iter)
         except StopIteration:
-            raise StopIteration() #造成无限循环卡死
-        #     if trg_x is None or trg_y is None:
-        #         self.stop_trg = True
-        #         self.data_loader_trg_iter = iter(self.data_loader_trg)
-        #         trg_x, trg_y = next(self.data_loader_trg_iter)
+            raise StopIteration()
 
-        # if (self.stop_trg) or self.iter > self.max_dataset_size:
-        #     self.stop_trg = False
-        #     raise StopIteration()
 
         else:
             self.iter += 1
             data = {}
-            # add target data
             data["Tx"] = trg_x
             data["Ty"] = trg_y
 

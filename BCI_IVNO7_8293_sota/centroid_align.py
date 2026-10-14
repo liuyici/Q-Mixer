@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# # Source Free Knowledge Transfer for Privacy-Preserving Unsupervised Motor Imagery Classification
+# Source Free Knowledge Transfer for Privacy-Preserving Unsupervised Motor Imagery Classification
 # Author: Wen Zhang and Dongrui Wu
 # Date: Oct., 2021
 # E-mail: wenz@hust.edu.cn
@@ -71,16 +71,16 @@ class centroid_align(BaseEstimator, TransformerMixin):
 
 
 if __name__ == '__main__':
-    X = np.random.rand(144, 22, 750)  # 144*22*750
+    X = np.random.rand(144, 22, 750)
     print(X.shape)
 
-    # way 1
+    # Separate fit and transform.
     ca = centroid_align(center_type='euclid', cov_type='lwf')
     ca.fit(X)
     cov_new, X_new = ca.transform(X)
     print(cov_new.shape, X_new.shape)
 
-    # way 2
+    # Combined fit and transform.
     ca = centroid_align(center_type='euclid', cov_type='lwf')
     cov_new, X_new = ca.fit_transform(X)
     print(cov_new.shape, X_new.shape)

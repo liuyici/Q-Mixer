@@ -388,15 +388,11 @@ def quaternion_linear(input, r_weight, i_weight, j_weight, k_weight, bias=True):
 def quaternion_linear_rotation(input, zero_kernel, r_weight, i_weight, j_weight, k_weight, bias=None,
                                quaternion_format=False, scale=None):
     """
-    Applies a quaternion rotation transformation to the incoming data:
+    Apply the unit-quaternion sandwich rotation, preserving the real component.
 
-    The rotation W*x*W^t can be replaced by R*x following:
-    https://en.wikipedia.org/wiki/Quaternions_and_spatial_rotation
-
-    Works for unitary and non unitary weights.
-
-    The initial size of the input must be a multiple of 3 if quaternion_format = False and
-    4 if quaternion_format = True.
+    Nonzero weights are normalized; zero weights give the identity rotation.
+    Input features use [r, i, j, k] blocks when quaternion_format is True and
+    [i, j, k] blocks otherwise. Optional scale multiplies the vector part.
     """
 
     square_r          = (r_weight*r_weight)
@@ -404,7 +400,10 @@ def quaternion_linear_rotation(input, zero_kernel, r_weight, i_weight, j_weight,
     square_j          = (j_weight*j_weight)
     square_k          = (k_weight*k_weight)
 
-    norm              = torch.sqrt(square_r+square_i+square_j+square_k + 0.0001)
+    norm_squared      = square_r + square_i + square_j + square_k
+    norm              = torch.sqrt(torch.where(
+        norm_squared > 0, norm_squared, torch.ones_like(norm_squared)
+    ))
 
     r_n_weight          = (r_weight / norm)
     i_n_weight          = (i_weight / norm)
@@ -436,8 +435,8 @@ def quaternion_linear_rotation(input, zero_kernel, r_weight, i_weight, j_weight,
             rot_kernel_2  = torch.cat([zero_kernel, (ij+rk), (1.0 - (square_i + square_k)), (jk-ri)], dim=0)
             rot_kernel_3  = torch.cat([zero_kernel, (ik-rj), (jk+ri), (1.0 - (square_i + square_j))], dim=0)
 
-        zero_kernel2  = torch.cat([zero_kernel, zero_kernel, zero_kernel, zero_kernel], dim=0)
-        global_rot_kernel = torch.cat([zero_kernel2, rot_kernel_1, rot_kernel_2, rot_kernel_3], dim=1)
+        real_kernel = torch.cat([torch.ones_like(r_weight), zero_kernel, zero_kernel, zero_kernel], dim=0)
+        global_rot_kernel = torch.cat([real_kernel, rot_kernel_1, rot_kernel_2, rot_kernel_3], dim=1)
 
     else:
         if scale is not None:
